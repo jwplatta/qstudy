@@ -32,4 +32,14 @@ data/
 .DS_Store
 Thumbs.db
 
+# Environment variables
 .env
+
+# Ruby
+Gemfile.lock
+vendor/
+.bundle/
+tmp/
+
+# Schwab tokens
+.schwab_rb/

@@ -1,0 +1,159 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Script to fetch SPX option chains from today to 7 days out
+# Outputs CSV files to the data/ directory
+# Usage: ruby bin/fetch_spx_option_chains
+
+require "pry"
+require "bundler/setup"
+require "schwab_rb"
+require "dotenv"
+require "date"
+require "csv"
+require "fileutils"
+
+Dotenv.load
+
+SchwabRb.configure do |config|
+  config.log_file = "./tmp/schwab_rb.log"
+  config.log_level = "INFO"
+  config.silence_output = false
+end
+
+def create_client
+  token_path = ENV["SCHWAB_TOKEN_PATH"] || File.join(Dir.home, ".schwab_rb", "token.json")
+
+  SchwabRb::Auth.init_client_easy(
+    ENV.fetch("SCHWAB_API_KEY"),
+    ENV.fetch("SCHWAB_APP_SECRET"),
+    ENV.fetch("SCHWAB_APP_CALLBACK_URL"),
+    token_path
+  )
+end
+
+def write_option_chain_to_csv(symbol, expiration_date, option_chain, output_dir)
+  sanitized_symbol = symbol.gsub(/[^0-9A-Za-z_\-\.]/, "")
+  sanitized_date = expiration_date.strftime("%Y-%m-%d")
+  file_name = "#{sanitized_symbol}_#{sanitized_date}.csv"
+  file_path = File.join(output_dir, file_name)
+
+  underlying_price = option_chain.underlying_price
+  call_opts = option_chain.call_opts
+  put_opts = option_chain.put_opts
+
+  headers = [
+    "contract_type",
+    "symbol",
+    "description",
+    "strike",
+    "expiration_date",
+    "mark",
+    "bid",
+    "bid_size",
+    "ask",
+    "ask_size",
+    "last",
+    "last_size",
+    "open_interest",
+    "total_volume",
+    "delta",
+    "gamma",
+    "theta",
+    "vega",
+    "rho",
+    "volatility",
+    "theoretical_volatility",
+    "theoretical_option_value",
+    "intrinsic_value",
+    "extrinsic_value",
+    "underlying_price"
+  ]
+
+  CSV.open(file_path, "w") do |csv|
+    csv << headers
+
+    call_opts.each do |contract|
+      csv << extract_contract_data("CALL", contract, underlying_price)
+    end
+
+    put_opts.each do |contract|
+      csv << extract_contract_data("PUT", contract, underlying_price)
+    end
+  end
+end
+
+def extract_contract_data(contract_type, contract, underlying_price)
+  [
+    contract_type,
+    contract.symbol,
+    contract.description,
+    contract.strike,
+    contract.expiration_date,
+    contract.mark,
+    contract.bid,
+    contract.bid_size,
+    contract.ask,
+    contract.ask_size,
+    contract.last,
+    contract.last_size,
+    contract.open_interest,
+    contract.total_volume,
+    contract.delta,
+    contract.gamma,
+    contract.theta,
+    contract.vega,
+    contract.rho,
+    contract.volatility,
+    contract.theoretical_volatility,
+    contract.theoretical_option_value,
+    contract.intrinsic_value,
+    contract.extrinsic_value,
+    underlying_price
+
+  ]
+end
+
+if __FILE__ == $PROGRAM_NAME
+  symbol = "$SPX"
+  output_dir = "data"
+
+  FileUtils.mkdir_p(output_dir)
+  FileUtils.mkdir_p("tmp")
+
+  puts "Fetching SPX option chains..."
+  puts "Symbol: #{symbol}"
+  puts "Output directory: #{output_dir}"
+
+  client = create_client
+
+  today = Date.today
+  expiration_dates = (0..7).map { |days| today + days }
+
+  puts "Fetching option chains for #{expiration_dates.length} expiration dates:"
+  expiration_dates.each { |date| puts "  - #{date}" }
+
+  expiration_dates.each_with_index do |expiration_date, index|
+    puts "[#{index + 1}/#{expiration_dates.length}] Fetching options expiring on #{expiration_date}..."
+
+    begin
+      option_chain = client.get_option_chain(
+        symbol,
+        contract_type: "ALL",
+        strike_range: "ALL",
+        from_date: expiration_date,
+        to_date: expiration_date
+      )
+
+      write_option_chain_to_csv(symbol, expiration_date, option_chain, output_dir)
+
+      sleep(0.5) unless index == expiration_dates.length - 1
+
+    rescue StandardError => e
+      puts "  Error fetching option chain: #{e.message}"
+      puts "  Continuing with next date..."
+    end
+  end
+
+  puts ">>> Option chain data saved to '#{output_dir}/'"
+end
