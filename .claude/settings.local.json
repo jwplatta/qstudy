@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "SlashCommand(/pythonic:py-init)",
+      "Bash(uv init:*)",
+      "Bash(uv add:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
