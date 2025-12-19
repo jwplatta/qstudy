@@ -32,15 +32,14 @@ def create_client
   )
 end
 
-def write_option_chain_to_csv(symbol, expiration_date, option_chain, output_dir)
-  sanitized_symbol = symbol.gsub(/[^0-9A-Za-z_\-\.]/, "")
-  sanitized_date = expiration_date.strftime("%Y-%m-%d")
-  file_name = "#{sanitized_symbol}_#{sanitized_date}.csv"
+def write_option_chain_to_csv(
+  option_root, expiration_date,
+  underlying_price, call_opts, put_opts, output_dir
+)
+  expiration_date_str = expiration_date.strftime("%Y-%m-%d")
+  fetch_timestamp = Time.now.strftime("%Y-%m-%d_%H-%M-%S")
+  file_name = "#{option_root}_exp#{expiration_date_str}_#{fetch_timestamp}.csv"
   file_path = File.join(output_dir, file_name)
-
-  underlying_price = option_chain.underlying_price
-  call_opts = option_chain.call_opts
-  put_opts = option_chain.put_opts
 
   headers = [
     "contract_type",
@@ -116,6 +115,7 @@ end
 
 if __FILE__ == $PROGRAM_NAME
   symbol = "$SPX"
+  option_root = "SPXW"
   output_dir = "data"
 
   FileUtils.mkdir_p(output_dir)
@@ -128,7 +128,15 @@ if __FILE__ == $PROGRAM_NAME
   client = create_client
 
   today = Date.today
-  expiration_dates = (0..7).map { |days| today + days }
+  cnt = 0
+  expiration_dates = [today]
+  next_date = today
+
+  while expiration_dates.size < 10
+    next_date += 1
+    next if next_date.saturday? || next_date.sunday?
+    expiration_dates << next_date
+  end
 
   puts "Fetching option chains for #{expiration_dates.length} expiration dates:"
   expiration_dates.each { |date| puts "  - #{date}" }
@@ -144,11 +152,19 @@ if __FILE__ == $PROGRAM_NAME
         from_date: expiration_date,
         to_date: expiration_date
       )
+      call_opts = option_chain.call_opts.select { |opt| opt.option_root == option_root }
+      put_opts = option_chain.put_opts.select { |opt| opt.option_root == option_root }
 
-      write_option_chain_to_csv(symbol, expiration_date, option_chain, output_dir)
+      write_option_chain_to_csv(
+        option_root,
+        expiration_date,
+        option_chain.underlying_price,
+        call_opts,
+        put_opts,
+        output_dir
+      )
 
       sleep(0.5) unless index == expiration_dates.length - 1
-
     rescue StandardError => e
       puts "  Error fetching option chain: #{e.message}"
       puts "  Continuing with next date..."
