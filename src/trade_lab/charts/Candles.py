@@ -1,15 +1,14 @@
 from pathlib import Path
 
-import matplotlib.dates as mdates
-import matplotlib.pyplot as plt
+import mplfinance as mpf
 import pandas as pd
 
 
 class Candles:
-    """Candlestick chart with volume overlay.
+    """Candlestick chart for price visualization.
 
     This class provides methods to load and visualize candlestick data
-    with volume from CSV files.
+    from CSV files.
     """
 
     @classmethod
@@ -56,105 +55,77 @@ class Candles:
         start_time="08:00",
         end_time="15:00",
         figsize=(14, 6),
-        candle_width_pct=0.8,
+        style="charles",
+        ax=None,
     ):
-        """Plot candlestick chart with volume.
+        """Plot candlestick chart using mplfinance.
 
         Args:
-            symbol: Trading symbol for labels (optional, extracted from data if not provided)
+            symbol: Trading symbol for labels
             interval: Candle interval in minutes (default: 5)
             start_time: Session start time in HH:MM format (default: "08:00")
             end_time: Session end time in HH:MM format (default: "15:00")
             figsize: Figure size tuple (width, height)
-            candle_width_pct: Width of candle as percentage of interval (default: 0.8 = 80% candle, 20% gap)
+            style: mplfinance style (default: "charles")
+            ax: Optional matplotlib axis to plot on (for subplots)
 
         Returns:
-            Tuple of (fig, (ax_price, ax_vol))
+            Tuple of (fig, ax) if ax is None, otherwise just ax
         """
-        # Extract data
-        times = self.df["datetime"]
-        opens = self.df["open"]
-        highs = self.df["high"]
-        lows = self.df["low"]
-        closes = self.df["close"]
-        volumes = self.df["volume"]
+        # Prepare data for mplfinance (requires OHLCV with datetime index)
+        plot_df = self.df.copy()
+        plot_df.set_index("datetime", inplace=True)
 
-        # Convert timestamps to matplotlib numbers
-        time_nums = mdates.date2num(times)
+        # Rename columns to match mplfinance expectations (Title case)
+        plot_df.rename(
+            columns={
+                "open": "Open",
+                "high": "High",
+                "low": "Low",
+                "close": "Close",
+                "volume": "Volume",
+            },
+            inplace=True,
+        )
 
-        # Calculate actual candle width considering gap
-        # The candle_width_pct now represents how much of the interval the candle occupies
-        # (gap is implicitly 1.0 - candle_width_pct)
-        candle_width = (interval / 1440) * candle_width_pct
+        # Filter to time range
+        session_date = plot_df.index.date[0]
+        time_start = pd.Timestamp(f"{session_date} {start_time}")
+        time_end = pd.Timestamp(f"{session_date} {end_time}")
+        plot_df = plot_df.loc[time_start:time_end]
 
-        # ======================
-        # PLOT
-        # ======================
-        fig, ax_price = plt.subplots(figsize=figsize)
-        ax_vol = ax_price.twinx()
-
-        # ----------------------
-        # Candlesticks
-        # ----------------------
-        for t, o, h, l, c, v in zip(time_nums, opens, highs, lows, closes, volumes):
-            is_up = c >= o
-            color = "green" if is_up else "red"
-
-            # Wick
-            ax_price.vlines(t, l, h, color=color, linewidth=1)
-
-            # Body
-            body_low = min(o, c)
-            body_height = abs(c - o)
-
-            ax_price.bar(
-                t,
-                body_height if body_height > 0 else 0.01,  # doji visibility
-                bottom=body_low,
-                width=candle_width,
-                color=color,
-                alpha=0.9,
-            )
-
-            # Volume
-            ax_vol.bar(t, v, width=candle_width, color="gray", alpha=0.3)
-
-        # ======================
-        # AXES FORMATTING
-        # ======================
-        session_date = self.df["datetime"].dt.date.iloc[0]
-
-        # Set x-axis limits
-        x_start = pd.Timestamp(f"{session_date} {start_time}")
-        x_end = pd.Timestamp(f"{session_date} {end_time}")
-        ax_price.set_xlim(x_start, x_end)
-
-        # X-axis: half-hour ticks
-        ax_price.xaxis.set_major_locator(mdates.MinuteLocator(byminute=[0, 30]))
-        ax_price.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
-
-        # Labels
-        ax_price.set_xlabel("Time")
-        symbol_label = symbol if symbol else "Price"
-        ax_price.set_ylabel(f"{symbol_label}")
-        ax_vol.set_ylabel("Volume")
-
-        # Grid (price axis only, faint)
-        ax_price.grid(True, linestyle="--", linewidth=0.5, alpha=0.3)
-
-        # Rotate time labels
-        plt.setp(ax_price.get_xticklabels(), rotation=45, ha="right")
-
-        # Title
-        title = f"{interval}-Min Candles with Volume"
+        # Build title
+        title = f"{interval}-Min Candles"
         if symbol:
             title = f"{symbol} {title}"
         title += f" - {session_date}"
-        plt.title(title)
 
-        plt.tight_layout()
-
-        return fig, (ax_price, ax_vol)
+        # Plot with or without provided axis
+        if ax is not None:
+            # Plot on provided axis (for subplots)
+            mpf.plot(
+                plot_df,
+                type="candle",
+                volume=False,
+                style=style,
+                ax=ax,
+                ylabel="Price",
+            )
+            ax.set_title(title)
+            return ax
+        else:
+            # Create new figure
+            fig, axes = mpf.plot(
+                plot_df,
+                type="candle",
+                volume=False,
+                style=style,
+                figsize=figsize,
+                title=title,
+                ylabel="Price",
+                returnfig=True,
+            )
+            return fig, axes
 
     def _prepare_data(self):
         """Prepare and validate candle data."""
