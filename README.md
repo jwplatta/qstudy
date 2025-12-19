@@ -5,7 +5,7 @@ Trading analysis tools for developing indicators like GEX, analyzing trades, and
 ## Overview
 
 Trade Lab is a Python project focused on:
-- Developing custom trading indicators (GEX, etc.)
+- Developing trading indicators (GEX, etc.)
 - Analyzing trade data and performance
 - Creating reusable chart classes for common visualizations
 - Prototyping in Jupyter notebooks
@@ -24,37 +24,72 @@ trade-lab/
 
 ## Setup
 
-This project uses `uv` for fast Python package management.
+This project uses both Python (via `uv`) and Ruby (via `bundler`) for different tasks:
+- Python for analysis, indicators, and visualization
+- Ruby for fetching data from Schwab API
 
-### Install uv (if not already installed)
+### Python Setup
+
+Install uv (if not already installed):
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-### Create virtual environment and install dependencies
+Create virtual environment and install Python dependencies:
 
 ```bash
 uv sync
 ```
 
-This will create a virtual environment in `.venv` and install all dependencies.
+### Ruby Setup
+
+Install Ruby dependencies:
+
+```bash
+bundle install
+```
+
+### Schwab API Configuration
+
+1. Copy the example environment file:
+```bash
+cp .env.example .env
+```
+
+2. Edit `.env` and add your Schwab API credentials:
+   - Get API credentials from https://developer.schwab.com/
+   - Set `SCHWAB_API_KEY`, `SCHWAB_APP_SECRET`, and `SCHWAB_APP_CALLBACK_URL`
+
+3. On first run, the script will open a browser for OAuth authentication
 
 ## Usage
 
-### Activate the virtual environment
+### Fetching Data from Schwab
+
+Fetch SPX option chains for the next 7 days:
+
+```bash
+bundle exec ruby bin/fetch_spx_option_chains
+```
+
+This will create CSV files in the `data/` directory with option chain data for each expiration date.
+
+### Python Analysis
+
+Activate the Python virtual environment:
 
 ```bash
 source .venv/bin/activate
 ```
 
-### Run Jupyter Lab
+Run Jupyter Lab for interactive analysis:
 
 ```bash
 jupyter lab
 ```
 
-Notebooks should be created in the `notebooks/` directory.
+Notebooks should be created in the `notebooks/` directory. Load the CSV data from `data/` for analysis.
 
 ### Run tests
 
@@ -90,6 +125,8 @@ uv run mypy src/
 
 ## Dependencies
 
+### Python Dependencies
+
 Core libraries:
 - `numpy` - Numerical computing
 - `pandas` - Data analysis and manipulation
@@ -101,7 +138,16 @@ Development tools:
 - `ruff` - Fast linting and formatting
 - `mypy` - Static type checking
 
+### Ruby Dependencies
+
+Data fetching:
+- `schwab_rb` - Schwab API client
+- `dotenv` - Environment variable management
+- `pry` - Debugging (optional)
+
 ## Adding New Dependencies
+
+### Python Dependencies
 
 ```bash
 # Add runtime dependency
@@ -109,4 +155,11 @@ uv add package-name
 
 # Add development dependency
 uv add --dev package-name
+```
+
+### Ruby Dependencies
+
+```bash
+# Add to Gemfile, then run:
+bundle install
 ```
