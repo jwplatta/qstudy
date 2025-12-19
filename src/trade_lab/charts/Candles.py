@@ -56,6 +56,7 @@ class Candles:
         start_time="08:00",
         end_time="15:00",
         figsize=(14, 6),
+        candle_width_pct=0.8,
     ):
         """Plot candlestick chart with volume.
 
@@ -65,6 +66,7 @@ class Candles:
             start_time: Session start time in HH:MM format (default: "08:00")
             end_time: Session end time in HH:MM format (default: "15:00")
             figsize: Figure size tuple (width, height)
+            candle_width_pct: Width of candle as percentage of interval (default: 0.8 = 80% candle, 20% gap)
 
         Returns:
             Tuple of (fig, (ax_price, ax_vol))
@@ -80,8 +82,10 @@ class Candles:
         # Convert timestamps to matplotlib numbers
         time_nums = mdates.date2num(times)
 
-        # Candle width: 80% of interval in minutes
-        candle_width = (interval / 1440) * 0.8
+        # Calculate actual candle width considering gap
+        # The candle_width_pct now represents how much of the interval the candle occupies
+        # (gap is implicitly 1.0 - candle_width_pct)
+        candle_width = (interval / 1440) * candle_width_pct
 
         # ======================
         # PLOT
