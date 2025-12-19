@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import matplotlib.dates as mdates
@@ -6,26 +6,40 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from .gamma_utils import row_gross_gex
+
 
 class DirectionalGammaImbalance:
-    def __init__(self, data_dir="data", min_abs_delta=0.15, max_abs_delta=0.55):
+    def __init__(
+        self,
+        data_dir="data",
+        strike_width=50.0,
+        multiplier=100.0,
+        gamma_scale=0.01,
+    ):
         """
         Initialize DirectionalGammaImbalance calculator and plotter.
 
         Args:
             data_dir: Directory containing option chain CSV files
-            min_abs_delta: Minimum absolute delta for filtering (default 0.15)
-            max_abs_delta: Maximum absolute delta for filtering (default 0.55)
+            strike_width: Half-width of strike band around spot (default: 50.0)
+                         e.g., 50 means strikes within +/- 50 points of spot
+            multiplier: Contract multiplier (default: 100.0 for SPX)
+            gamma_scale: Scaling factor for gamma units (default: 0.01)
         """
         self.data_dir = Path(data_dir)
-        self.min_abs_delta = min_abs_delta
-        self.max_abs_delta = max_abs_delta
+        self.strike_width = strike_width
+        self.multiplier = multiplier
+        self.gamma_scale = gamma_scale
         self.timestamps = []
         self.dgi_scores = []
+        self.strike_counts = []
+        self.top5_dgi_scores = []
+        self.top5_strikes = None
 
     def plot(self, figsize=(14, 7), save_path=None):
         """
-        Plot Directional Gamma Imbalance over time as a simple line chart.
+        Plot Directional Gamma Imbalance over time.
 
         Args:
             figsize: Figure size (width, height)
@@ -37,24 +51,32 @@ class DirectionalGammaImbalance:
         if not self.timestamps:
             raise ValueError("No data to plot. Call load_and_calculate() first.")
 
-        fig, ax = plt.subplots(figsize=figsize)
+        fig, ax1 = plt.subplots(figsize=figsize)
 
-        ax.plot(self.timestamps, self.dgi_scores, "b-", linewidth=2)
-        ax.scatter(self.timestamps, self.dgi_scores, c="blue", s=20, zorder=5)
+        # Plot DGI on primary axis
+        ax1.plot(self.timestamps, self.dgi_scores, "b-", linewidth=2, label="DGI (Strike Window)")
+        ax1.scatter(self.timestamps, self.dgi_scores, c="blue", s=20, zorder=5)
+
+        # Plot Top 5 Strikes DGI if available
+        if self.top5_dgi_scores:
+            ax1.plot(self.timestamps, self.top5_dgi_scores, "r-", linewidth=2, label="DGI (Top 5 OI)", linestyle="--")
+            ax1.scatter(self.timestamps, self.top5_dgi_scores, c="red", s=20, zorder=5)
 
         # Zero line
-        ax.axhline(y=0, color="gray", linestyle="-", linewidth=1, alpha=0.5)
+        ax1.axhline(y=0, color="gray", linestyle="-", linewidth=1, alpha=0.5)
 
         # Format x-axis to show time as HH:MM
-        ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
-        ax.xaxis.set_major_locator(mdates.AutoDateLocator())
+        ax1.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
+        ax1.xaxis.set_major_locator(mdates.AutoDateLocator())
 
         # Labels and styling
-        ax.set_xlabel("Time")
-        ax.set_ylabel("Directional Gamma Imbalance")
-        ax.set_title("Intraday Directional Gamma Imbalance")
-        ax.set_ylim(-1.0, 1.0)
-        ax.grid(True, alpha=0.3)
+        ax1.set_xlabel("Time")
+        ax1.set_ylabel("Directional Gamma Imbalance")
+        title = f"Intraday Directional Gamma Imbalance (±{self.strike_width} strike window)"
+        ax1.set_title(title)
+        ax1.set_ylim(-1.0, 1.0)
+        ax1.grid(True, alpha=0.3)
+        ax1.legend(loc="upper left")
 
         fig.autofmt_xdate()
         plt.tight_layout()
@@ -62,7 +84,7 @@ class DirectionalGammaImbalance:
         if save_path:
             plt.savefig(save_path, dpi=300, bbox_inches="tight")
 
-        return fig, ax
+        return fig, ax1
 
     def load_and_calculate(self, symbol=None, expiration_filter=None, sample_date=None):
         """Load all option chain CSV files and calculate Directional Gamma Imbalance
@@ -90,6 +112,21 @@ class DirectionalGammaImbalance:
             filter_msg += f" and expiration {expiration_filter}"
             raise ValueError(f"No option chain CSV files found in {self.data_dir}{filter_msg}")
 
+        # Identify top 5 strikes by open interest from first file
+        if csv_files:
+            first_df = pd.read_csv(csv_files[0])
+            if not first_df.empty and "underlying_price" in first_df.columns:
+                spot_first = float(first_df["underlying_price"].iloc[0])
+                # Filter to strike window
+                band_first = first_df[
+                    (first_df["strike"] >= spot_first - self.strike_width)
+                    & (first_df["strike"] <= spot_first + self.strike_width)
+                ]
+                if not band_first.empty:
+                    # Get top 5 strikes by open interest
+                    top5_df = band_first.nlargest(5, "open_interest")
+                    self.top5_strikes = set(top5_df["strike"].values)
+
         for csv_file in csv_files:
             try:
                 # Parse timestamp from filename: $SPX_exp2025-12-24_2025-12-18_14-30-00.csv
@@ -106,10 +143,17 @@ class DirectionalGammaImbalance:
                 df = pd.read_csv(csv_file)
 
                 # Calculate DGI for this snapshot
-                dgi_norm = self._calculate_dgi(df)
+                dgi_norm, strike_count = self._calculate_dgi(df)
+
+                # Calculate DGI for top 5 strikes if identified
+                top5_dgi = 0.0
+                if self.top5_strikes:
+                    top5_dgi = self._calculate_top5_dgi(df)
 
                 self.timestamps.append(timestamp)
                 self.dgi_scores.append(dgi_norm)
+                self.strike_counts.append(strike_count)
+                self.top5_dgi_scores.append(top5_dgi)
 
             except Exception as e:
                 print(f"Warning: Error processing {csv_file.name}: {e}")
@@ -120,42 +164,72 @@ class DirectionalGammaImbalance:
 
     def _calculate_dgi(self, df):
         """
-        Calculate Directional Gamma Imbalance (DGI).
+        Directional Gamma Imbalance (DGI), computed from GROSS GEX.
 
-        Filters options by delta range, then computes gamma exposure above
-        vs  belowspot to determine directional gamma imbalance.
+        Filters options by strike window around spot, then computes gamma exposure above
+        vs below spot to determine directional gamma imbalance.
 
         Returns:
-            float in [-1, +1]
-            < 0: upside fragile
-            > 0: downside fragile
+            tuple: (DGI score in [-1, +1], number of strikes used)
+            < 0: more gamma mass above spot than below
+            > 0: more gamma mass below spot than above
         """
         if df.empty or "underlying_price" not in df.columns:
-            return 0.0
+            return 0.0, 0
 
         spot = df["underlying_price"].iloc[0]
 
-        # Filter by delta range
+        # Filter to near-spot strikes
         filtered_df = df.loc[
-            (df["delta"].abs() >= self.min_abs_delta) & (df["delta"].abs() <= self.max_abs_delta)
+            (df["strike"] >= spot - self.strike_width)
+            & (df["strike"] <= spot + self.strike_width)
         ].copy()
 
         if filtered_df.empty:
-            return 0.0
+            return 0.0, 0
 
-        # Calculate gamma exposure (dealers are short options)
-        filtered_df["gex"] = -filtered_df["gamma"] * filtered_df["open_interest"] * (spot**2) * 0.01
+        strike_count = len(filtered_df)
+        filtered_df["gex"] = row_gross_gex(filtered_df, spot, self.multiplier, self.gamma_scale)
 
-        # Sum gamma above and below spot
         gamma_above = filtered_df.loc[filtered_df["strike"] > spot, "gex"].sum()
         gamma_below = filtered_df.loc[filtered_df["strike"] < spot, "gex"].sum()
 
         denom = abs(gamma_above) + abs(gamma_below)
+        if denom == 0:
+            return 0.0, strike_count
 
+        dgi = (gamma_above - gamma_below) / denom
+        return float(np.clip(dgi, -1.0, 1.0)), strike_count
+
+    def _calculate_top5_dgi(self, df):
+        """
+        Calculate DGI for only the top 5 strikes identified in first file.
+
+        Args:
+            df: DataFrame with option chain data
+
+        Returns:
+            float: DGI score in [-1, +1] for top 5 strikes
+        """
+        if df.empty or "underlying_price" not in df.columns or not self.top5_strikes:
+            return 0.0
+
+        spot = df["underlying_price"].iloc[0]
+
+        # Filter to only top 5 strikes
+        top5_df = df[df["strike"].isin(self.top5_strikes)].copy()
+
+        if top5_df.empty:
+            return 0.0
+
+        top5_df["gex"] = row_gross_gex(top5_df, spot, self.multiplier, self.gamma_scale)
+
+        gamma_above = top5_df.loc[top5_df["strike"] > spot, "gex"].sum()
+        gamma_below = top5_df.loc[top5_df["strike"] < spot, "gex"].sum()
+
+        denom = abs(gamma_above) + abs(gamma_below)
         if denom == 0:
             return 0.0
 
         dgi = (gamma_above - gamma_below) / denom
-
-        # Clamp to [-1, +1] range
-        return np.clip(dgi, -1.0, 1.0)
+        return float(np.clip(dgi, -1.0, 1.0))
