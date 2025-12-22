@@ -2,10 +2,11 @@
 # frozen_string_literal: true
 
 # Script to fetch intraday candles for a symbol at specified interval
-# Usage: ruby bin/fetch_spx_5_min_candles.rb [SYMBOL] [INTERVAL]
-# Example: ruby bin/fetch_spx_5_min_candles.rb $SPX 5
+# Usage: ruby bin/fetch_spx_5_min_candles.rb [SYMBOL] [INTERVAL] [DATE]
+# Example: ruby bin/fetch_spx_5_min_candles.rb $SPX 5 2025-12-20
 # SYMBOL: default is $SPX
 # INTERVAL: 1, 5, or 10 (minutes), default is 5
+# DATE: YYYY-MM-DD format, default is today
 
 require "pry"
 require "bundler/setup"
@@ -47,15 +48,15 @@ def interval_to_frequency(interval)
   end
 end
 
-def fetch_intraday_candles(symbol, interval)
-  today = Date.today
+def fetch_intraday_candles(symbol, interval, date = nil)
+  target_date = date || Date.today
 
   # Time objects for the start and end of the day
-  start_of_day = DateTime.new(today.year, today.month, today.day, 6, 0, 0)
-  end_of_day = DateTime.new(today.year, today.month, today.day, 23, 59, 59)
+  start_of_day = DateTime.new(target_date.year, target_date.month, target_date.day, 6, 0, 0)
+  end_of_day = DateTime.new(target_date.year, target_date.month, target_date.day, 23, 59, 59)
 
   client = create_client
-  puts "Fetching #{interval}-minute candles for #{symbol} on #{today}..."
+  puts "Fetching #{interval}-minute candles for #{symbol} on #{target_date}..."
   puts "Start: #{start_of_day}"
   puts "End: #{end_of_day}"
 
@@ -74,10 +75,10 @@ def fetch_intraday_candles(symbol, interval)
 
   puts "Price history data collection complete!"
   puts "Symbol: #{symbol}"
-  puts "Date: #{today}"
+  puts "Date: #{target_date}"
   puts "Number of candles: #{price_hist.candles.length}" if price_hist.respond_to?(:candles)
 
-  write_candles_to_csv(symbol, interval, today, price_hist)
+  write_candles_to_csv(symbol, interval, target_date, price_hist)
 
   price_hist
 rescue StandardError => e
@@ -124,13 +125,27 @@ end
 if __FILE__ == $PROGRAM_NAME
   symbol = ARGV[0] || "$SPX"
   interval = (ARGV[1] || "5").to_i
+  date_str = ARGV[2]
 
   unless [1, 5, 10].include?(interval)
     puts "Error: Invalid interval '#{interval}'. Must be 1, 5, or 10 minutes."
-    puts "Usage: ruby bin/fetch_spx_5_min_candles.rb [SYMBOL] [INTERVAL]"
-    puts "Example: ruby bin/fetch_spx_5_min_candles.rb $SPX 5"
+    puts "Usage: ruby bin/fetch_spx_5_min_candles.rb [SYMBOL] [INTERVAL] [DATE]"
+    puts "Example: ruby bin/fetch_spx_5_min_candles.rb $SPX 5 2025-12-20"
     exit 1
   end
 
-  fetch_intraday_candles(symbol, interval)
+  # Parse date if provided
+  date = nil
+  if date_str
+    begin
+      date = Date.parse(date_str)
+    rescue ArgumentError => e
+      puts "Error: Invalid date format '#{date_str}'. Must be YYYY-MM-DD."
+      puts "Usage: ruby bin/fetch_spx_5_min_candles.rb [SYMBOL] [INTERVAL] [DATE]"
+      puts "Example: ruby bin/fetch_spx_5_min_candles.rb $SPX 5 2025-12-20"
+      exit 1
+    end
+  end
+
+  fetch_intraday_candles(symbol, interval, date)
 end
