@@ -57,6 +57,7 @@ class Candles:
         figsize=(14, 6),
         style="charles",
         ax=None,
+        show_volume=False,
     ):
         """Plot candlestick chart using mplfinance.
 
@@ -68,6 +69,7 @@ class Candles:
             figsize: Figure size tuple (width, height)
             style: mplfinance style (default: "charles")
             ax: Optional matplotlib axis to plot on (for subplots)
+            show_volume: If True, display volume bars on twin y-axis (default: False)
 
         Returns:
             Tuple of (fig, ax) if ax is None, otherwise just ax
@@ -94,19 +96,17 @@ class Candles:
         time_end = pd.Timestamp(f"{session_date} {end_time}")
         plot_df = plot_df.loc[time_start:time_end]
 
-        # Build title
         title = f"{interval}-Min Candles"
         if symbol:
             title = f"{symbol} {title}"
         title += f" - {session_date}"
 
-        # Plot with or without provided axis
         if ax is not None:
             # Plot on provided axis (for subplots)
             mpf.plot(
                 plot_df,
                 type="candle",
-                volume=False,
+                volume=show_volume,
                 style=style,
                 ax=ax,
                 ylabel="Price",
@@ -118,7 +118,7 @@ class Candles:
             fig, axes = mpf.plot(
                 plot_df,
                 type="candle",
-                volume=False,
+                volume=show_volume,
                 style=style,
                 figsize=figsize,
                 title=title,
