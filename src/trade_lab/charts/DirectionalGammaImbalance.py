@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 import matplotlib.dates as mdates
@@ -59,7 +59,14 @@ class DirectionalGammaImbalance:
 
         # Plot Top 5 Strikes DGI if available
         if self.top5_dgi_scores:
-            ax1.plot(self.timestamps, self.top5_dgi_scores, "r-", linewidth=2, label="DGI (Top 5 OI)", linestyle="--")
+            ax1.plot(
+                self.timestamps,
+                self.top5_dgi_scores,
+                "r-",
+                linewidth=2,
+                label="DGI (Top 5 OI)",
+                linestyle="--",
+            )
             ax1.scatter(self.timestamps, self.top5_dgi_scores, c="red", s=20, zorder=5)
 
         # Zero line
@@ -71,10 +78,10 @@ class DirectionalGammaImbalance:
 
         # Labels and styling
         ax1.set_xlabel("Time")
-        ax1.set_ylabel("Directional Gamma Imbalance")
+        ax1.set_ylabel("DGI")
         title = f"Intraday Directional Gamma Imbalance (±{self.strike_width} strike window)"
         ax1.set_title(title)
-        ax1.set_ylim(-1.0, 1.0)
+        ax1.set_ylim(-2.0, 2.0)
         ax1.grid(True, alpha=0.3)
         ax1.legend(loc="upper left")
 
@@ -181,8 +188,7 @@ class DirectionalGammaImbalance:
 
         # Filter to near-spot strikes
         filtered_df = df.loc[
-            (df["strike"] >= spot - self.strike_width)
-            & (df["strike"] <= spot + self.strike_width)
+            (df["strike"] >= spot - self.strike_width) & (df["strike"] <= spot + self.strike_width)
         ].copy()
 
         if filtered_df.empty:
