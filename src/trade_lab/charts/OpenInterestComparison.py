@@ -5,15 +5,15 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 
-class OpenInterestWeekly:
-    """Open Interest Weekly charting utilities.
+class OpenInterestComparison:
+    """Open Interest Comparison charting utilities.
 
     This class provides methods to visualize aggregate open interest by strike
-    with stacked bars representing different expiration dates over a week period.
+    with grouped bars representing different expiration dates for side-by-side comparison.
     """
 
     def __init__(self, csv_path=None, dataframe=None, data_dir="data"):
-        """Initialize OpenInterestWeekly chart.
+        """Initialize OpenInterestComparison chart.
 
         Args:
             csv_path: Path to CSV file containing option chain data (deprecated, use dataframe)
@@ -39,7 +39,7 @@ class OpenInterestWeekly:
         top_n_strikes=None,
         contract_type="ALL",
     ):
-        """Plot open interest by strike with stacked bars by expiration.
+        """Plot open interest by strike with grouped bars by expiration for side-by-side comparison.
 
         Args:
             figsize: Figure size (width, height)
@@ -96,11 +96,11 @@ class OpenInterestWeekly:
 
         fig, ax = plt.subplots(figsize=figsize)
 
-        oi_by_strike_exp.plot(kind="bar", stacked=True, ax=ax, width=0.8, colormap="tab20")
+        oi_by_strike_exp.plot(kind="bar", stacked=False, ax=ax, width=0.8, colormap="tab20")
 
         contract_label = "All Contracts" if contract_type == "ALL" else f"{contract_type}s"
         ax.set_title(
-            f"Weekly Open Interest by Strike and Expiration ({contract_label})",
+            f"Open Interest Comparison by Strike and Expiration ({contract_label})",
             fontsize=14,
             fontweight="bold",
         )
@@ -127,21 +127,22 @@ class OpenInterestWeekly:
 
         return fig, ax
 
-    def load_data(self, symbol, start_date):
-        """Load option chain data for a week starting from the given date.
+    def load_data(self, symbol, start_date, days_out=7):
+        """Load option chain data for a specified number of days starting from the given date.
 
         This method loads the most recent option chain snapshot for each day
-        in a week period (start_date + 7 days).
+        in the specified period (start_date + days_out days).
 
         Args:
             symbol: Trading symbol (e.g., '$SPX', 'SPXW')
             start_date: Starting date in YYYY-MM-DD format
+            days_out: Number of days to include (default: 7). If days_out=1, only start_date is used.
 
         Returns:
             DataFrame with aggregated option chain data
         """
         start_dt = datetime.strptime(start_date, "%Y-%m-%d")
-        end_dt = start_dt + timedelta(days=7)
+        end_dt = start_dt + timedelta(days=days_out)
 
         # Find all CSV files for this symbol
         pattern = f"{symbol}_exp*.csv"
