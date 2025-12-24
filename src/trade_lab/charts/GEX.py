@@ -1,3 +1,6 @@
+from datetime import datetime
+from pathlib import Path
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -12,19 +15,31 @@ class GEX:
 
     MULTIPLIER = 100  # Standard options contract multiplier
 
-    def __init__(self, csv_path=None, dataframe=None):
+    def __init__(
+        self, symbol=None, expiration_date=None, data_dir="data", csv_path=None, dataframe=None
+    ):
         """Initialize GEX chart.
 
         Args:
-            csv_path: Path to CSV file containing option chain data
-            dataframe: Pandas DataFrame with option chain data (alternative to csv_path)
+            symbol: Trading symbol (e.g., '$SPX', 'SPXW')
+            expiration_date: Option expiration date in YYYY-MM-DD format
+            data_dir: Directory containing option chain CSV files
+            csv_path: Path to CSV file containing option chain data (legacy)
+            dataframe: Pandas DataFrame with option chain data (legacy)
         """
+        self.data_dir = Path(data_dir)
+        self.df = None
+
         if csv_path is not None:
             self.df = pd.read_csv(csv_path)
         elif dataframe is not None:
             self.df = dataframe.copy()
+        elif symbol is not None and expiration_date is not None:
+            self._load_data(symbol, expiration_date)
         else:
-            raise ValueError("Must provide either csv_path or dataframe")
+            raise ValueError(
+                "Must provide either (symbol and expiration_date) or csv_path or dataframe"
+            )
 
         self._prepare_data()
 
@@ -196,3 +211,23 @@ class GEX:
             return zero_gamma_strike
 
         return None
+
+    def _load_data(self, symbol, expiration_date):
+        """Load the most recent option chain snapshot for a given symbol and expiration.
+
+        Args:
+            symbol: Trading symbol (e.g., '$SPX', 'SPXW')
+            expiration_date: Option expiration date in YYYY-MM-DD format
+        """
+        # Find all CSV files for this symbol and expiration
+        pattern = f"{symbol}_exp{expiration_date}_*.csv"
+        csv_files = sorted(self.data_dir.glob(pattern))
+
+        if not csv_files:
+            raise ValueError(
+                f"No option chain CSV files found for symbol {symbol} with expiration {expiration_date} in {self.data_dir}"
+            )
+
+        # Get the most recent file (sorted alphabetically by timestamp)
+        latest_file = csv_files[-1]
+        self.df = pd.read_csv(latest_file)
