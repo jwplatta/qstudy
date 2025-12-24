@@ -1,17 +1,19 @@
 """Chart classes for common trading visualizations."""
 
 from .Candles import Candles
+from .CompareGEX import CompareGEX
 from .DirectionalGammaImbalance import DirectionalGammaImbalance
 from .GEX import GEX
 from .GrossGEX import GrossGEX
-from .OpenInterestWeekly import OpenInterestWeekly
+from .OpenInterestComparison import OpenInterestComparison
 from .VolumeByExpiry import VolumeByExpiry
 
 __all__ = [
     "GEX",
+    "CompareGEX",
     "DirectionalGammaImbalance",
     "Candles",
     "GrossGEX",
-    "OpenInterestWeekly",
+    "OpenInterestComparison",
     "VolumeByExpiry",
 ]
