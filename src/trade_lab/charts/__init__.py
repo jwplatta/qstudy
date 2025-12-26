@@ -7,6 +7,7 @@ from .GEX import GEX
 from .GrossGEX import GrossGEX
 from .OpenInterestComparison import OpenInterestComparison
 from .VolumeByExpiry import VolumeByExpiry
+from .VolumeDelta import VolumeDelta
 
 __all__ = [
     "GEX",
@@ -16,4 +17,5 @@ __all__ = [
     "GrossGEX",
     "OpenInterestComparison",
     "VolumeByExpiry",
+    "VolumeDelta",
 ]
