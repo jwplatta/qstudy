@@ -66,10 +66,12 @@ class VolumeByExpiry:
 
             # Combine into a single DataFrame with all strikes
             all_strikes = sorted(set(call_volume.index) | set(put_volume.index))
-            volume_data = pd.DataFrame({
-                "CALL": call_volume.reindex(all_strikes, fill_value=0),
-                "PUT": put_volume.reindex(all_strikes, fill_value=0)
-            })
+            volume_data = pd.DataFrame(
+                {
+                    "CALL": call_volume.reindex(all_strikes, fill_value=0),
+                    "PUT": put_volume.reindex(all_strikes, fill_value=0),
+                }
+            )
 
             if min_strike is not None or max_strike is not None:
                 if min_strike is not None and max_strike is not None:
@@ -103,7 +105,8 @@ class VolumeByExpiry:
             if min_strike is not None or max_strike is not None:
                 if min_strike is not None and max_strike is not None:
                     volume_by_strike = volume_by_strike.loc[
-                        (volume_by_strike.index >= min_strike) & (volume_by_strike.index <= max_strike)
+                        (volume_by_strike.index >= min_strike)
+                        & (volume_by_strike.index <= max_strike)
                     ]
                 elif min_strike is not None:
                     volume_by_strike = volume_by_strike.loc[volume_by_strike.index >= min_strike]
@@ -162,9 +165,7 @@ class VolumeByExpiry:
         else:
             strikes = volume_by_strike.index
 
-        ax.set_xticklabels(
-            [f"{int(strike)}" for strike in strikes], rotation=45, ha="right"
-        )
+        ax.set_xticklabels([f"{int(strike)}" for strike in strikes], rotation=45, ha="right")
 
         # NOTE: Reduce number of x-ticks if too many strikes
         if len(strikes) > 50:
