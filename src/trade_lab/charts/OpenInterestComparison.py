@@ -145,8 +145,14 @@ class OpenInterestComparison:
         end_dt = start_dt + timedelta(days=days_out)
 
         # Find all CSV files for this symbol
-        pattern = f"{symbol}_exp*.csv"
-        csv_files = sorted(self.data_dir.glob(pattern))
+        months = [start_dt.month, (start_dt.month % 12) + 1]
+        years = [start_dt.year, start_dt.year if start_dt.month < 12 else start_dt.year + 1]
+
+        csv_files = []
+        for m, y in zip(months, years):
+            month_str = f"{y:04d}-{m:02d}"
+            pattern = f"{symbol}_exp{month_str}*.csv"
+            csv_files.extend(sorted(self.data_dir.glob(pattern)))
 
         if not csv_files:
             raise ValueError(
