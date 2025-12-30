@@ -14,13 +14,7 @@ def row_gross_gex(df, spot, multiplier, gamma_scale):
     Returns:
         Series of gross gamma exposure values per row
     """
-    return (
-        df["gamma"]
-        * df["open_interest"]
-        * (spot**2)
-        * multiplier
-        * gamma_scale
-    )
+    return df["gamma"] * df["open_interest"] * (spot**2) * multiplier * gamma_scale
 
 
 def apply_dealer_sign(value, dealer_short: bool):
