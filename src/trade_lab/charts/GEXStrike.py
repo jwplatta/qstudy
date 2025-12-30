@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 
 
-class GEX:
+class GEXStrike:
     """Gamma Exposure (GEX) charting utilities.
 
     This class provides methods to calculate and visualize gamma exposure
@@ -52,28 +52,17 @@ class GEX:
             date: Date string for chart title (optional)
             figsize: Figure size tuple (width, height)
         """
-        # Calculate GEX by strike
         gex_filtered = self.calculate_gex_by_strike(min_strike, max_strike)
-
-        # Find zero gamma level
-        zero_gamma_strike = self.find_zero_gamma_level(gex_filtered)
-
-        # Get underlying price
         underlying_price = self.df["underlying_price"].iloc[0]
 
-        # Calculate totals
         total_call_gex = gex_filtered["CALL"].sum()
         total_put_gex = gex_filtered["PUT"].sum()
 
-        # Print summary statistics
-        strike_range = f"{min_strike or gex_filtered['strike'].min():.0f}-{max_strike or gex_filtered['strike'].max():.0f}"
+        strike_range = f"{min_strike}-{max_strike}"
         print(f"Strike range: {strike_range}")
         print(f"Total Call Gamma Exposure: {total_call_gex:,.0f}")
         print(f"Total Put Gamma Exposure:  {total_put_gex:,.0f}")
-        if zero_gamma_strike:
-            print(f"Zero Gamma Level: ≈ {zero_gamma_strike:.1f}")
 
-        # Create plot
         fig, ax1 = plt.subplots(figsize=figsize)
 
         # Set x-axis ticks
@@ -117,17 +106,6 @@ class GEX:
             label=f"Underlying ({underlying_price:.1f})",
         )
 
-        # Zero gamma line
-        if zero_gamma_strike:
-            ax1.axvline(
-                zero_gamma_strike,
-                color="red",
-                linestyle="--",
-                lw=1.2,
-                label=f"Zero Gamma ≈ {zero_gamma_strike:.1f}",
-            )
-
-        # Labels and styling
         title = f"SPX Gamma Exposure ({strike_range} strikes)"
         if date:
             title += f" - {date}"
@@ -154,63 +132,32 @@ class GEX:
             self.df["gamma"]
             * self.df["open_interest"]
             * self.MULTIPLIER
-            * self.df["underlying_price"]
+            * (self.df["underlying_price"] ** 2)
         )
 
     def calculate_gex_by_strike(self, min_strike=None, max_strike=None):
-        """Calculate gamma exposure aggregated by strike price.
-
-        Args:
-            min_strike: Minimum strike to include (optional)
-            max_strike: Maximum strike to include (optional)
+        """
+        Calculate gamma exposure by strike for a *single* option chain
+        (one row per strike + contract_type).
 
         Returns:
             DataFrame with columns: strike, CALL, PUT, net_gamma
         """
-        # Aggregate by strike and contract type
+        df = self.df.copy()
+
+        if min_strike is not None:
+            df = df[df["strike"] >= min_strike]
+        if max_strike is not None:
+            df = df[df["strike"] <= max_strike]
+
+        # Pivot CALL / PUT into columns
         gex_by_strike = (
-            self.df.groupby(["strike", "contract_type"])["gex"]
-            .sum()
-            .unstack(fill_value=0)
-            .reset_index()
+            df.pivot(index="strike", columns="contract_type", values="gex").fillna(0).reset_index()
         )
 
-        # Filter strike range if specified
-        if min_strike is not None or max_strike is not None:
-            mask = pd.Series([True] * len(gex_by_strike))
-            if min_strike is not None:
-                mask = mask & (gex_by_strike["strike"] >= min_strike)
-            if max_strike is not None:
-                mask = mask & (gex_by_strike["strike"] <= max_strike)
-
-            gex_by_strike = gex_by_strike[mask].copy()
-
-        # Compute net gamma (calls - puts)
-        gex_by_strike["net_gamma"] = gex_by_strike["CALL"] - gex_by_strike["PUT"]
+        gex_by_strike["net_gamma"] = gex_by_strike.get("CALL", 0) - gex_by_strike.get("PUT", 0)
 
         return gex_by_strike
-
-    def find_zero_gamma_level(self, gex_data):
-        """Find the strike price where net gamma crosses zero.
-
-        Args:
-            gex_data: DataFrame from calculate_gex_by_strike()
-
-        Returns:
-            Float representing zero gamma strike, or None if not found
-        """
-        sign_changes = np.where(np.sign(gex_data["net_gamma"]).diff() != 0)[0]
-
-        if len(sign_changes) > 0:
-            idx = sign_changes[0]
-            zero_gamma_strike = np.interp(
-                0,
-                [gex_data["net_gamma"].iloc[idx], gex_data["net_gamma"].iloc[idx + 1]],
-                [gex_data["strike"].iloc[idx], gex_data["strike"].iloc[idx + 1]],
-            )
-            return zero_gamma_strike
-
-        return None
 
     def _load_data(self, symbol, expiration_date):
         """Load the most recent option chain snapshot for a given symbol and expiration.

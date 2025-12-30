@@ -3,14 +3,14 @@
 from .Candles import Candles
 from .CompareGEX import CompareGEX
 from .DirectionalGammaImbalance import DirectionalGammaImbalance
-from .GEX import GEX
+from .GEXStrike import GEXStrike
 from .GrossGEX import GrossGEX
 from .OpenInterestComparison import OpenInterestComparison
 from .VolumeByExpiry import VolumeByExpiry
 from .VolumeDelta import VolumeDelta
 
 __all__ = [
-    "GEX",
+    "GEXStrike",
     "CompareGEX",
     "DirectionalGammaImbalance",
     "Candles",

@@ -1,7 +1,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
 
-from .GEX import GEX
+from .GEXStrike import GEXStrike
 
 
 class CompareGEX:
@@ -58,7 +58,7 @@ class CompareGEX:
         for idx, expiry in enumerate(self.expiration_dates):
             try:
                 # Create GEX instance for this expiration (it handles data loading)
-                gex = GEX(symbol=self.symbol, expiration_date=expiry, data_dir=self.data_dir)
+                gex = GEXStrike(symbol=self.symbol, expiration_date=expiry, data_dir=self.data_dir)
             except ValueError as e:
                 print(f"Warning: {e}")
                 axes[idx].axis("off")
