@@ -1,7 +1,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
 
-from .GEXStrike import GEXStrike
+from .StrikeGammaSingleExp import StrikeGammaSingleExp
 
 
 class CompareGEX:
@@ -57,8 +57,9 @@ class CompareGEX:
         # Plot each expiration date
         for idx, expiry in enumerate(self.expiration_dates):
             try:
-                # Create GEX instance for this expiration (it handles data loading)
-                gex = GEXStrike(symbol=self.symbol, expiration_date=expiry, data_dir=self.data_dir)
+                gex = StrikeGammaSingleExp(
+                    symbol=self.symbol, expiration_date=expiry, data_dir=self.data_dir
+                )
             except ValueError as e:
                 print(f"Warning: {e}")
                 axes[idx].axis("off")
