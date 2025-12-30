@@ -115,7 +115,7 @@ end
 
 if __FILE__ == $PROGRAM_NAME
   symbol = "$SPX"
-  option_root = "SPX"
+  option_root = "SPXW"
   output_dir = "data"
 
   FileUtils.mkdir_p(output_dir)
