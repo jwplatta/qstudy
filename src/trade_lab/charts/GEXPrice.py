@@ -9,7 +9,7 @@ from ..utils.black_scholes import bs_gamma
 
 
 class GEXPrice:
-    MULTIPLIER = 100  # Standard options contract multiplier
+    MULTIPLIER = 100
 
     def __init__(self, symbol=None, start_date=None, days_out=10, data_dir="data", debug=False):
         """
@@ -39,11 +39,9 @@ class GEXPrice:
         start_dt = datetime.strptime(self.start_date, "%Y-%m-%d")
         end_dt = start_dt + timedelta(days=self.days_out)
 
-        # Determine which months to search
         months = [start_dt.month, (start_dt.month % 12) + 1]
         years = [start_dt.year, start_dt.year if start_dt.month < 12 else start_dt.year + 1]
 
-        # Find all CSV files for the relevant months
         csv_files = []
         for m, y in zip(months, years):
             month_str = f"{y:04d}-{m:02d}"
@@ -55,9 +53,7 @@ class GEXPrice:
                 f"No option chain CSV files found for symbol {self.symbol} in {self.data_dir}"
             )
 
-        # Group files by expiration date and get the latest fetch for each
         files_by_expiration = {}
-        fetch_times = []
         for csv_file in csv_files:
             try:
                 parts = csv_file.stem.split("_")
@@ -83,7 +79,6 @@ class GEXPrice:
                 f"No option chain files found with expirations between {self.start_date} and {end_dt.strftime('%Y-%m-%d')}"
             )
 
-        # Load the latest file for each expiration
         latest_files = [file_info[1] for file_info in files_by_expiration.values()]
         self.asof = min(file_info[0] for file_info in files_by_expiration.values())
 
@@ -100,7 +95,6 @@ class GEXPrice:
             if not df_temp.empty:
                 dfs.append(df_temp)
 
-        # Concatenate all option chains
         self.all_opts = pd.concat(dfs, ignore_index=True).copy()
 
         # NOTE: convert the expiration date to a datetime when trading stop:
@@ -127,11 +121,9 @@ class GEXPrice:
         self.all_opts["K"] = pd.to_numeric(self.all_opts["strike"], errors="coerce")
         self.all_opts["OI"] = pd.to_numeric(self.all_opts["open_interest"], errors="coerce")
 
-        # Filter valid rows
         self.all_opts = self.all_opts.dropna(subset=["iv", "K", "OI", "T"])
         self.all_opts = self.all_opts[(self.all_opts["iv"] > 0) & (self.all_opts["OI"] > 0)].copy()
 
-        # Get spot price from the data
         self.spot = float(
             pd.to_numeric(self.all_opts["underlying_price"], errors="coerce").dropna().iloc[0]
         )
@@ -146,20 +138,17 @@ class GEXPrice:
         if self.all_opts is None:
             self.load_data()
 
-        # Extract arrays for calculation
         is_call = (self.all_opts["contract_type"] == "CALL").to_numpy()
         k = self.all_opts["K"].to_numpy(dtype=float)
         t = self.all_opts["T"].to_numpy(dtype=float)
         iv = self.all_opts["iv"].to_numpy(dtype=float)
         oi = self.all_opts["OI"].to_numpy(dtype=float)
 
-        # Create price grid around spot
         prices_grid = np.arange(round(self.spot) - 300, round(self.spot) + 301, 1)
 
         if self.debug:
             print(f"Calculating GEX on price grid from {prices_grid[0]} to {prices_grid[-1]}")
 
-        # Calculate net GEX for each price point
         net_gex_by_price = {}
 
         for p in prices_grid:
@@ -217,10 +206,8 @@ class GEXPrice:
         ax.plot(prices, gex, linewidth=2, label="Net GEX vs Price")
         ax.axhline(0, linestyle="--", linewidth=1, label="Zero Gamma (y=0)")
 
-        # Mark spot price
         ax.axvline(self.spot, linestyle=":", linewidth=1.5, label="Spot")
 
-        # Mark zero gamma line if found
         if zgl is not None:
             ax.axvline(zgl, linestyle="--", linewidth=1.5, label=f"ZGL ≈ {zgl:.1f}")
             ax.annotate(f"ZGL ≈ {zgl:.1f}", xy=(zgl, 0), xytext=(zgl + 5, gex.max() * 0.05))
