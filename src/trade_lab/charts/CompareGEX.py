@@ -67,9 +67,6 @@ class CompareGEX:
             # Calculate GEX by strike
             gex_filtered = gex.calculate_gex_by_strike(min_strike, max_strike)
 
-            # Find zero gamma level
-            zero_gamma_strike = gex.find_zero_gamma_level(gex_filtered)
-
             # Get underlying price
             underlying_price = gex.df["underlying_price"].iloc[0]
 
@@ -116,16 +113,6 @@ class CompareGEX:
                 lw=1.5,
                 label=f"Underlying ({underlying_price:.1f})",
             )
-
-            # Zero gamma line
-            if zero_gamma_strike:
-                ax1.axvline(
-                    zero_gamma_strike,
-                    color="red",
-                    linestyle="--",
-                    lw=1.2,
-                    label=f"Zero Gamma ≈ {zero_gamma_strike:.1f}",
-                )
 
             # Labels and styling
             strike_range = f"{min_strike or gex_filtered['strike'].min():.0f}-{max_strike or gex_filtered['strike'].max():.0f}"
