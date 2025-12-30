@@ -1,4 +1,3 @@
-from datetime import datetime
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -6,7 +5,7 @@ import numpy as np
 import pandas as pd
 
 
-class GEXStrike:
+class StrikeGammaSingleExp:
     """Gamma Exposure (GEX) charting utilities.
 
     This class provides methods to calculate and visualize gamma exposure
@@ -122,18 +121,23 @@ class GEXStrike:
 
         return fig, (ax1, ax2)
 
-    def _prepare_data(self):
+    def _prepare_data(self, cash=False):
         """Ensure numeric columns are parsed properly."""
         numeric_columns = ["strike", "gamma", "open_interest", "underlying_price"]
         for col in numeric_columns:
             self.df[col] = pd.to_numeric(self.df[col], errors="coerce")
 
-        self.df["gex"] = (
-            self.df["gamma"]
-            * self.df["open_interest"]
-            * self.MULTIPLIER
-            * (self.df["underlying_price"] ** 2)
-        )
+        if cash:
+            self.df["gex"] = (
+                self.df["gamma"]
+                * self.df["open_interest"]
+                * self.MULTIPLIER
+                * (self.df["underlying_price"] ** 2)
+            )
+        else:
+            self.df["gex"] = (
+                self.df["gamma"] * self.df["open_interest"] * (self.df["underlying_price"] ** 2)
+            )
 
     def calculate_gex_by_strike(self, min_strike=None, max_strike=None):
         """
