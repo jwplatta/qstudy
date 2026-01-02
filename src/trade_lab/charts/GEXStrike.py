@@ -6,8 +6,6 @@ import numpy as np
 import pandas as pd
 from matplotlib.ticker import MultipleLocator
 
-from ..utils.black_scholes import bs_gamma
-
 
 class GEXStrike:
     MULTIPLIER = 100
@@ -139,34 +137,27 @@ class GEXStrike:
         if self.all_opts is None:
             self.load_data()
 
-        # Calculate gamma at spot for each option
         is_call = (self.all_opts["contract_type"] == "CALL").to_numpy()
         k = self.all_opts["K"].to_numpy(dtype=float)
-        t = self.all_opts["T"].to_numpy(dtype=float)
-        iv = self.all_opts["iv"].to_numpy(dtype=float)
         oi = self.all_opts["OI"].to_numpy(dtype=float)
+        gam = pd.to_numeric(self.all_opts["gamma"], errors="coerce").to_numpy(dtype=float)
 
-        # Calculate gamma at current spot price
-        s = np.full_like(k, float(self.spot), dtype=float)
-        gam = bs_gamma(s=s, k=k, t=t, sigma=iv, r=0.0, q=0.0)
-
-        # GEX scaling: gamma * OI * spot^2
         gex_each = gam * oi * (self.spot**2)
 
         gex_df = pd.DataFrame({"strike": k, "is_call": is_call, "gex": gex_each})
 
-        net_gex_by_strike = {}
-        for strike in gex_df["strike"].unique():
-            strike_data = gex_df[gex_df["strike"] == strike]
-            call_gex = strike_data[strike_data["is_call"]]["gex"].sum()
-            put_gex = strike_data[~strike_data["is_call"]]["gex"].sum()
-            net_gex_by_strike[strike] = call_gex - put_gex
+        net = (
+            gex_df.assign(sign=np.where(gex_df["is_call"], 1.0, -1.0))
+            .assign(net_gex=lambda d: d["gex"] * d["sign"])
+            .groupby("strike", as_index=False)["net_gex"]
+            .sum()
+        )
 
         if self.debug:
-            print(f"Calculated GEX for {len(net_gex_by_strike)} unique strikes")
+            print(f"Calculated GEX for {len(net)} unique strikes")
 
-        strikes = np.array(sorted(net_gex_by_strike.keys()), dtype=float)
-        gex = np.array([net_gex_by_strike[s] for s in strikes], dtype=float)
+        strikes = net["strike"].to_numpy(float)
+        gex = net["net_gex"].to_numpy(float)
 
         strike_range = 300
         mask = (strikes >= self.spot - strike_range) & (strikes <= self.spot + strike_range)
