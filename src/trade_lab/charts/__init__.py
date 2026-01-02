@@ -4,6 +4,7 @@ from .Candles import Candles
 from .CompareGEX import CompareGEX
 from .DirectionalGammaImbalance import DirectionalGammaImbalance
 from .GEXPrice import GEXPrice
+from .GEXStrike import GEXStrike
 from .GrossGEX import GrossGEX
 from .OpenInterestComparison import OpenInterestComparison
 from .StrikeGammaSingleExp import StrikeGammaSingleExp
@@ -13,6 +14,7 @@ from .VolumeDelta import VolumeDelta
 __all__ = [
     "StrikeGammaSingleExp",
     "GEXPrice",
+    "GEXStrike",
     "CompareGEX",
     "DirectionalGammaImbalance",
     "Candles",
