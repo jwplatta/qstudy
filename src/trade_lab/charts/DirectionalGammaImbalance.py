@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from .gamma_utils import row_gross_gex
+from ..utils.gex import row_gross_gex
 
 
 class DirectionalGammaImbalance:
@@ -42,8 +42,9 @@ class DirectionalGammaImbalance:
         Plot Directional Gamma Imbalance over time.
 
         Args:
-            figsize: Figure size (width, height)
-            save_path: Optional path to save the figure
+            figsize: Figure size (width, height) in inches (default: (14, 7))
+            save_path: Optional path to save the figure (default: None)
+                       Pass True to save to dgi.png
 
         Returns:
             Tuple of (fig, ax)
@@ -89,6 +90,8 @@ class DirectionalGammaImbalance:
         plt.tight_layout()
 
         if save_path:
+            if save_path is True:
+                save_path = "dgi.png"
             plt.savefig(save_path, dpi=300, bbox_inches="tight")
 
         return fig, ax1
