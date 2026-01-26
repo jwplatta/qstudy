@@ -5,7 +5,7 @@ import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from .gamma_utils import row_gross_gex
+from ..utils.gex import row_gross_gex
 
 
 class GrossGEX:
@@ -47,8 +47,9 @@ class GrossGEX:
         """Plot Gross Gamma Exposure over time as a line chart.
 
         Args:
-            figsize: Figure size (width, height)
-            save_path: Optional path to save the figure
+            figsize: Figure size (width, height) in inches (default: (14, 7))
+            save_path: Optional path to save the figure (default: None)
+                       Pass True to save to gross_gex.png
 
         Returns:
             Tuple of (fig, ax)
@@ -99,6 +100,8 @@ class GrossGEX:
         plt.tight_layout()
 
         if save_path:
+            if save_path is True:
+                save_path = "gross_gex.png"
             plt.savefig(save_path, dpi=300, bbox_inches="tight")
 
         return fig, ax1
