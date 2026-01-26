@@ -3,7 +3,9 @@
     "allow": [
       "SlashCommand(/pythonic:py-init)",
       "Bash(uv init:*)",
-      "Bash(uv add:*)"
+      "Bash(uv add:*)",
+      "mcp__todoist__find-projects",
+      "mcp__todoist__find-tasks"
     ],
     "deny": [],
     "ask": []
