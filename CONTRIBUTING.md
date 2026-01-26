@@ -2,6 +2,15 @@
 
 This document outlines the workflow for contributing to this repository. Following these guidelines helps maintain code quality and a smooth development process for everyone.
 
+## Before Starting Any Task
+
+**Read this section first.** This applies to all contributors, including AI coding agents.
+
+1. **Read this entire document** before making any changes
+2. **Create a worktree** (not just a branch) for your work - see [Creating a Worktree](#creating-a-worktree)
+3. **Never commit directly to main** - all changes go through pull requests
+4. **Clean up after merge** - remove your worktree and local branch
+
 ## Requirements
 - Python 3.12+
 - `git`
@@ -39,7 +48,7 @@ All branches MUST start with one of the following prefixes:
 
 ## Development Workflow
 
-To ensure that work is isolated and does not conflict with others, we recommend using git worktrees. Each feature or fix should be developed in its own worktree and branch.
+To ensure that work is isolated and does not conflict with others, you MUST use git worktrees. Each feature or fix should be developed in its own worktree and branch. Do not create branches directly in the main repository clone.
 
 ### Creating a Worktree
 
