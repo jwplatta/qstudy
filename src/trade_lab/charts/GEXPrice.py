@@ -124,13 +124,19 @@ class GEXPrice:
         self.all_opts = self.all_opts.dropna(subset=["iv", "K", "OI", "T"])
         self.all_opts = self.all_opts[(self.all_opts["iv"] > 0) & (self.all_opts["OI"] > 0)].copy()
 
+        # NOTE:
         self.spot = float(
             pd.to_numeric(self.all_opts["underlying_price"], errors="coerce").dropna().iloc[0]
         )
 
-    def plot(self):
+    def plot(self, figsize=(12, 6), save_path=None):
         """
         Generate and display the GEX by price plot.
+
+        Args:
+            figsize: Figure size (width, height) in inches (default: (12, 6))
+            save_path: Optional path to save the figure (default: None)
+                       Pass True to save to {symbol}_gex_price.png
 
         Returns:
             tuple: (fig, ax) matplotlib figure and axis objects
@@ -153,8 +159,6 @@ class GEXPrice:
 
         for p in prices_grid:
             s = np.full_like(k, float(p), dtype=float)
-
-            # Calculate gamma using Black-Scholes
             gam = bs_gamma(s=s, k=k, t=t, sigma=iv, r=0.0, q=0.0)
 
             # GEX scaling: gamma * OI * price^2
@@ -202,7 +206,7 @@ class GEXPrice:
             if y2 != y1:  # Avoid division by zero
                 zgl = x1 + (0 - y1) * (x2 - x1) / (y2 - y1)
 
-        fig, ax = plt.subplots(figsize=(12, 6))
+        fig, ax = plt.subplots(figsize=figsize)
         ax.plot(prices, gex, linewidth=2, label="Net GEX vs Price")
         ax.axhline(0, linestyle="--", linewidth=1, label="Zero Gamma (y=0)")
 
@@ -231,5 +235,10 @@ class GEXPrice:
         ax.legend()
         ax.grid(True)
         fig.tight_layout()
+
+        if save_path:
+            if save_path is True:
+                save_path = f"{self.symbol}_gex_price.png"
+            plt.savefig(save_path, dpi=300, bbox_inches="tight")
 
         return fig, ax

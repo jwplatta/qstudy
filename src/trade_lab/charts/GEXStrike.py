@@ -127,9 +127,14 @@ class GEXStrike:
             pd.to_numeric(self.all_opts["underlying_price"], errors="coerce").dropna().iloc[0]
         )
 
-    def plot(self):
+    def plot(self, figsize=(14, 7), save_path=None):
         """
         Generate and display the GEX by strike plot.
+
+        Args:
+            figsize: Figure size (width, height) in inches (default: (14, 7))
+            save_path: Optional path to save the figure (default: None)
+                       Pass True to save to {symbol}_gex_strike.png
 
         Returns:
             tuple: (fig, ax) matplotlib figure and axis objects
@@ -164,7 +169,7 @@ class GEXStrike:
         strikes = strikes[mask]
         gex = gex[mask]
 
-        fig, ax = plt.subplots(figsize=(14, 7))
+        fig, ax = plt.subplots(figsize=figsize)
         ax.bar(strikes, gex, width=5.0, label="Net GEX by Strike", alpha=0.7)
         ax.axhline(0, color="black", linestyle="-", linewidth=0.5)
         ax.axvline(
@@ -195,5 +200,10 @@ class GEXStrike:
         ax.legend()
         ax.grid(True, alpha=0.3)
         fig.tight_layout()
+
+        if save_path:
+            if save_path is True:
+                save_path = f"{self.symbol}_gex_strike.png"
+            plt.savefig(save_path, dpi=300, bbox_inches="tight")
 
         return fig, ax
