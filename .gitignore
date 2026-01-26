@@ -43,3 +43,5 @@ tmp/
 
 # Schwab tokens
 .schwab_rb/
+
+docs/examples
