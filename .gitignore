@@ -45,3 +45,4 @@ tmp/
 .schwab_rb/
 
 docs/examples
+/logs
