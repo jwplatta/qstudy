@@ -46,3 +46,9 @@ tmp/
 
 docs/examples
 /logs
+
+# QuantConnect
+lean.json
+/qc/**/config.json
+/qc/**/results.json
+/qc/**/backtests
