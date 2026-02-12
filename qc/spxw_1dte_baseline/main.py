@@ -16,7 +16,7 @@ class Spxw1dteBaseline(QCAlgorithm):
     """
 
     def initialize(self):
-        self.set_start_date(2021, 1, 1)
+        self.set_start_date(2022, 4, 1)
         self.set_end_date(2025, 12, 31)
         self.set_cash(50000)
 
@@ -80,22 +80,6 @@ class Spxw1dteBaseline(QCAlgorithm):
             self.debug(f"Warning: Could not load event dates: {e}")
             return set()
 
-    def get_next_trading_day(self, from_date):
-        """
-        Find the next trading day after from_date, skipping weekends.
-
-        Note: For simplicity, this version only skips weekends (Sat/Sun).
-        Market holidays are not explicitly handled but should be rare enough
-        not to significantly impact the baseline strategy results.
-        """
-        next_day = from_date + timedelta(days=1)
-
-        # Skip weekends
-        while next_day.weekday() >= 5:  # 5=Saturday, 6=Sunday
-            next_day += timedelta(days=1)
-
-        return next_day
-
     def is_expiration_on_event_date(self, expiry_date):
         """Check if expiry_date is an event date"""
         return expiry_date in self.event_dates
@@ -105,7 +89,7 @@ class Spxw1dteBaseline(QCAlgorithm):
         Called at 3:55pm ET to check if we should enter a new position.
         Skips entry if:
         - Already in a position
-        - Next trading day is an event date (avoid expiring on events)
+        - Next available expiration is an event date (avoid expiring on events)
         - No valid iron condor found
         """
         if self.is_warming_up:
@@ -114,25 +98,32 @@ class Spxw1dteBaseline(QCAlgorithm):
         if self.position_entered:
             return
 
-        # Get next trading day (handles weekends)
-        next_trading_day = self.get_next_trading_day(self.time.date())
-
-        # Skip if next trading day is an event date
-        if self.is_expiration_on_event_date(next_trading_day):
-            self.debug(f"Skipping entry - next trading day {next_trading_day} is event date")
-            return
-
         # Get option chain
         chain = self.current_slice.option_chains.get(self.spxw)
         if not chain:
             self.debug("No option chain available")
             return
 
-        # Filter for 1DTE options (expiring next trading day)
-        contracts = [x for x in chain if x.expiry.date() == next_trading_day]
+        # Find the nearest expiration date (SPXW expires Mon/Wed/Fri, not every day)
+        # Group by expiration and find the soonest one
+        expiries = sorted(set(x.expiry.date() for x in chain))
+        if not expiries:
+            self.debug("No expiries found in option chain")
+            return
+
+        # Get the nearest expiration date
+        nearest_expiry = expiries[0]
+
+        # Skip if nearest expiration is an event date
+        if self.is_expiration_on_event_date(nearest_expiry):
+            self.debug(f"Skipping entry - nearest expiry {nearest_expiry} is event date")
+            return
+
+        # Filter for options expiring on nearest date
+        contracts = [x for x in chain if x.expiry.date() == nearest_expiry]
 
         if not contracts:
-            self.debug(f"No contracts expiring on next trading day {next_trading_day}")
+            self.debug(f"No contracts expiring on {nearest_expiry}")
             return
 
         # Get current SPX price
@@ -143,7 +134,7 @@ class Spxw1dteBaseline(QCAlgorithm):
 
         if result:
             call_spread, put_spread, tweak_count = result
-            self.enter_position(call_spread, put_spread, spx_price, next_trading_day)
+            self.enter_position(call_spread, put_spread, spx_price, nearest_expiry)
         else:
             self.debug("No valid iron condor found - skipping entry")
 
@@ -160,7 +151,6 @@ class Spxw1dteBaseline(QCAlgorithm):
             f"EXPIRY={expiry_date}"
         )
 
-        # Create 4-leg iron condor
         legs = [
             Leg.create(put_spread["long_leg"].symbol, 1),  # Buy long put
             Leg.create(put_spread["short_leg"].symbol, -1),  # Sell short put
@@ -176,7 +166,7 @@ class Spxw1dteBaseline(QCAlgorithm):
             "entry_credit": round(total_credit, 2),
             "call_credit": round(call_spread["price"], 2),
             "put_credit": round(put_spread["price"], 2),
-            "profit_target": round(total_credit * 0.6, 2),
+            "profit_target": round(total_credit * 0.95, 2),
             "max_loss": round(total_credit * -3.0, 2),
             "long_put": put_spread["long_leg"].symbol,
             "short_put": put_spread["short_leg"].symbol,
@@ -204,7 +194,6 @@ class Spxw1dteBaseline(QCAlgorithm):
         if self.is_warming_up:
             return
 
-        # Calculate current P&L
         current_pnl = self.calculate_pnl()
 
         # Exit 1: Profit target
