@@ -52,3 +52,6 @@ lean.json
 /qc/**/config.json
 /qc/**/results.json
 /qc/**/backtests
+
+# work directoires
+/notebooks
