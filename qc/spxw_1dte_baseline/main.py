@@ -9,7 +9,7 @@ class Spxw1dteBaseline(QCAlgorithm):
     """
     Baseline SPXW 1DTE Iron Condor Strategy
 
-    - Enters 1DTE iron condors at 3:55pm ET
+    - Enters 1DTE iron condors starting at 3:50pm ET, retries every 10s until 4:00pm
     - Skips entries when next trading day is an event date (FOMC, CPI, employment)
     - Exits at 60% profit, -3x loss, or on 0DTE day (12pm if profitable, 1pm forced)
     - No rolling or adjustments (simple baseline)
@@ -17,7 +17,7 @@ class Spxw1dteBaseline(QCAlgorithm):
 
     def initialize(self):
         self.set_start_date(2022, 4, 1)
-        self.set_end_date(2025, 12, 31)
+        self.set_end_date(2022, 12, 31)
         self.set_cash(50000)
 
         # Brokerage model for realistic fills
@@ -31,19 +31,18 @@ class Spxw1dteBaseline(QCAlgorithm):
 
         # Add SPXW options (weekly)
         self.option = self.add_index_option(self.spx, "SPXW", Resolution.MINUTE)
-        self.option.set_filter(lambda x: x.include_weeklys().expiration(0, 2).strikes(-100, 100))
+        self.option.set_filter(lambda x: x.include_weeklys().expiration(0, 5).strikes(-150, 150))
         self.spxw = self.option.symbol
 
         # Load event dates (dates we don't want positions to expire on)
         self.event_dates = self.load_event_dates()
 
-        # Configure iron condor finder
         self.iron_condor_finder = IronCondorFinder(
             spread_width=20,
             min_credit=1.05,
             max_credit=1.45,
             max_call_delta=0.08,
-            min_call_delta=0.03,
+            min_call_delta=0.02,
             max_put_delta=0.10,
             min_put_delta=0.03,
             max_total_delta=0.18,
@@ -52,18 +51,17 @@ class Spxw1dteBaseline(QCAlgorithm):
             max_tweak_attempts=100,
         )
 
-        # Position tracking
         self.trade = None
         self.position_entered = False
+        self.entry_retry_seconds = 10  # Wait 10 seconds between retries
 
-        # Schedule entry at 3:55pm ET
+        # Schedule entry at 3:50pm ET (will retry until 4:00pm if no trade found)
         self.schedule.on(
             self.date_rules.every_day(self.spx),
-            self.time_rules.at(15, 55, TimeZones.NEW_YORK),
+            self.time_rules.at(15, 50, TimeZones.NEW_YORK),
             self.check_entry,
         )
 
-        # Monitor every 5 minutes
         self.schedule.on(
             self.date_rules.every_day(self.spx),
             self.time_rules.every(timedelta(minutes=5)),
@@ -86,29 +84,39 @@ class Spxw1dteBaseline(QCAlgorithm):
 
     def check_entry(self):
         """
-        Called at 3:55pm ET to check if we should enter a new position.
+        Called at 3:50pm ET to check if we should enter a new position.
+        Retries every 10 seconds until 4:00pm ET or until trade found.
+
         Skips entry if:
         - Already in a position
         - Next available expiration is an event date (avoid expiring on events)
         - No valid iron condor found
         """
+        current_date = self.time.date()
+
         if self.is_warming_up:
+            self.debug(f"{current_date} - Warming up, skipping entry check")
             return
 
         if self.position_entered:
             return
 
-        # Get option chain
-        chain = self.current_slice.option_chains.get(self.spxw)
-        if not chain:
-            self.debug("No option chain available")
+        # Check if we're past market close (4:00pm ET)
+        if self.time.hour >= 16:
             return
 
-        # Find the nearest expiration date (SPXW expires Mon/Wed/Fri, not every day)
-        # Group by expiration and find the soonest one
+        chain = self.current_slice.option_chains.get(self.spxw)
+        if not chain:
+            self.debug(f"{current_date} {self.time.strftime('%H:%M')} - No option chain available")
+            self.schedule_retry()
+            return
+
+        # Find the nearest expiration date (SPXW expires Mon/Wed/Fri before Apr 2022, daily after)
         expiries = sorted(set(x.expiry.date() for x in chain))
         if not expiries:
-            self.debug("No expiries found in option chain")
+            self.debug(
+                f"{current_date} {self.time.strftime('%H:%M')} - No expiries found in option chain"
+            )
             return
 
         # Get the nearest expiration date
@@ -116,27 +124,49 @@ class Spxw1dteBaseline(QCAlgorithm):
 
         # Skip if nearest expiration is an event date
         if self.is_expiration_on_event_date(nearest_expiry):
-            self.debug(f"Skipping entry - nearest expiry {nearest_expiry} is event date")
+            self.debug(
+                f"{current_date} - Skipping entry, nearest expiry {nearest_expiry} is event date"
+            )
             return
 
         # Filter for options expiring on nearest date
         contracts = [x for x in chain if x.expiry.date() == nearest_expiry]
 
         if not contracts:
-            self.debug(f"No contracts expiring on {nearest_expiry}")
+            self.debug(
+                f"{current_date} {self.time.strftime('%H:%M')} - No contracts expiring on {nearest_expiry}"
+            )
+            self.schedule_retry()
             return
 
-        # Get current SPX price
         spx_price = self.securities[self.spx].price
 
-        # Use IronCondorFinder to find valid iron condor
+        self.debug(
+            f"{current_date} {self.time.strftime('%H:%M')} - Searching for iron condor, SPX={spx_price:.2f}, target expiry={nearest_expiry}"
+        )
         result = self.iron_condor_finder.find_iron_condor(contracts, spx_price)
 
         if result:
             call_spread, put_spread, tweak_count = result
+            self.debug(
+                f"{current_date} {self.time.strftime('%H:%M')} - Found valid iron condor after {tweak_count} tweaks"
+            )
             self.enter_position(call_spread, put_spread, spx_price, nearest_expiry)
         else:
-            self.debug("No valid iron condor found - skipping entry")
+            self.debug(
+                f"{current_date} {self.time.strftime('%H:%M')} - No valid iron condor found, will retry in {self.entry_retry_seconds}s"
+            )
+            self.schedule_retry()
+
+    def schedule_retry(self):
+        """Schedule another entry attempt in entry_retry_seconds if before market close"""
+        if self.time.hour < 16:
+            retry_time = self.time + timedelta(seconds=self.entry_retry_seconds)
+            self.schedule.on(
+                self.date_rules.on(retry_time.year, retry_time.month, retry_time.day),
+                self.time_rules.at(retry_time.hour, retry_time.minute, TimeZones.NEW_YORK),
+                self.check_entry,
+            )
 
     def enter_position(self, call_spread, put_spread, spx_price, expiry_date):
         """Enter iron condor position"""

@@ -59,7 +59,12 @@ class IronCondorFinder:
         straddle_price = self.calculate_straddle_price(contracts, spx_price)
 
         call_spread = self.find_initial_spread(calls, spx_price, straddle_price, "CALL")
+        if call_spread == None:
+            raise Exception("No valid call spread found")
+
         put_spread = self.find_initial_spread(puts, spx_price, straddle_price, "PUT")
+        if put_spread == None:
+            raise Exception("No valid put spread found")
 
         if not call_spread or not put_spread:
             return None
@@ -122,6 +127,11 @@ class IronCondorFinder:
 
         while tweak_attempts < self.max_tweak_attempts:
             tweak_attempts += 1
+
+            # Validate spreads are not None before accessing
+            if not call_spread or not put_spread:
+                return None
+
             strategy_price = call_spread["price"] + put_spread["price"]
 
             # Check 1: Minimum credit
@@ -209,26 +219,33 @@ class IronCondorFinder:
         if not short_leg:
             short_leg = min(contracts, key=lambda x: abs(x.strike - short_strike))
 
+        # Find valid long leg candidates (must be on correct side of short leg)
         if side == "CALL":
-            long_strike = short_leg.strike + self.spread_width
+            # For calls, long leg must be higher strike (further OTM)
+            valid_longs = [c for c in contracts if c.strike > short_leg.strike]
+            target_long_strike = short_leg.strike + self.spread_width
         else:
-            long_strike = short_leg.strike - self.spread_width
+            # For puts, long leg must be lower strike (further OTM)
+            valid_longs = [c for c in contracts if c.strike < short_leg.strike]
+            target_long_strike = short_leg.strike - self.spread_width
 
-        long_leg = next((c for c in contracts if c.strike == long_strike), None)
+        if not valid_longs:
+            return None
+
+        # Try to find exact target strike first, otherwise find nearest valid option
+        long_leg = next((c for c in valid_longs if c.strike == target_long_strike), None)
         if not long_leg:
-            long_leg = min(contracts, key=lambda x: abs(x.strike - long_strike))
+            # Find the closest valid long leg to our target
+            long_leg = min(valid_longs, key=lambda x: abs(x.strike - target_long_strike))
 
-        # Validate spread: long leg should be further from ATM than short leg
-        if side == "CALL" and long_leg.strike <= short_leg.strike:
-            return None
-        if side == "PUT" and long_leg.strike >= short_leg.strike:
-            return None
+        # Get delta from greeks
+        delta = abs(short_leg.greeks.delta)
 
         return {
             "short_leg": short_leg,
             "long_leg": long_leg,
             "price": round(short_leg.bid_price - long_leg.ask_price, 2),
-            "delta": abs(short_leg.greeks.delta),
+            "delta": delta,
             "side": side,
         }
 
@@ -236,10 +253,14 @@ class IronCondorFinder:
         """Check if credits are balanced"""
         smaller = min(call_credit, put_credit)
         larger = max(call_credit, put_credit)
+        if larger == 0:
+            return False
         return (smaller / larger) >= self.credit_balance_ratio
 
     def is_delta_balanced(self, call_delta, put_delta):
         """Check if deltas are balanced"""
         smaller = min(call_delta, put_delta)
         larger = max(call_delta, put_delta)
+        if larger == 0:
+            return False  # Avoid division by zero
         return (smaller / larger) >= self.delta_ratio
