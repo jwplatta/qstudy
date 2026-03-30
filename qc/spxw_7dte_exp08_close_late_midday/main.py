@@ -29,7 +29,7 @@ class Spxw7dteRepairExperiment(QCAlgorithm):
     WINDOW_END = (15, 0)
 
     START_DATE = (2022, 1, 1)
-    END_DATE = (2026, 3, 26)
+    END_DATE = (2025, 12, 31)
     INITIAL_CASH = 50000
     MIN_DTE = 6
     MAX_DTE = 10
@@ -219,10 +219,6 @@ class Spxw7dteRepairExperiment(QCAlgorithm):
     def submit_entry_for_expiry(self, target_expiry, reason):
         chain = self.current_slice.option_chains.get(self.spxw)
         if not chain:
-            self.debug(
-                f"{self.time.date()} {self.time.strftime('%H:%M')} - "
-                "No option chain available"
-            )
             if reason == "baseline entry":
                 self.schedule_retry()
             return False
@@ -231,18 +227,10 @@ class Spxw7dteRepairExperiment(QCAlgorithm):
         if not contracts:
             next_expiry = self.next_available_chain_expiry(target_expiry, chain)
             if next_expiry and reason == "baseline entry":
-                self.debug(
-                    f"{self.time.date()} {self.time.strftime('%H:%M')} - "
-                    f"No contracts expiring on {target_expiry}, advancing to {next_expiry}"
-                )
                 target_expiry = next_expiry
                 contracts = [x for x in chain if x.expiry.date() == target_expiry]
 
         if not contracts:
-            self.debug(
-                f"{self.time.date()} {self.time.strftime('%H:%M')} - "
-                f"No contracts expiring on {target_expiry}"
-            )
             if reason == "baseline entry":
                 self.schedule_retry()
             return False
@@ -250,19 +238,11 @@ class Spxw7dteRepairExperiment(QCAlgorithm):
         spx_price = self.securities[self.spx].price
         result = self.iron_condor_finder.find_iron_condor(contracts, spx_price)
         if not result:
-            self.debug(
-                f"{self.time.date()} {self.time.strftime('%H:%M')} - "
-                f"No valid iron condor found for {target_expiry} during {reason}"
-            )
             if reason == "baseline entry":
                 self.schedule_retry()
             return False
 
         call_spread, put_spread, tweak_count = result
-        self.debug(
-            f"{self.time.date()} {self.time.strftime('%H:%M')} - "
-            f"Found valid iron condor after {tweak_count} tweaks for {reason}"
-        )
         self.entry_order_manager.submit_entry_order(
             call_spread, put_spread, spx_price, target_expiry
         )
@@ -285,10 +265,6 @@ class Spxw7dteRepairExperiment(QCAlgorithm):
         if self.is_warming_up:
             return
 
-        if self.pending_repair and self.pending_repair["stage"] == "awaiting_reentry":
-            self.attempt_repair_reentry()
-            return
-
         if not self.position_entered or not self.trade:
             return
 
@@ -308,7 +284,6 @@ class Spxw7dteRepairExperiment(QCAlgorithm):
 
         market_debit = self.exit_order_manager.current_market_debit()
         if market_debit is None:
-            self.debug("REPAIR SKIPPED: missing debit quote for current condor")
             return
 
         self.pending_repair = repair_plan
@@ -326,19 +301,6 @@ class Spxw7dteRepairExperiment(QCAlgorithm):
         if not self.in_time_window():
             return None
 
-        if self.TRIGGER_MODE == "price_multiple":
-            current_debit = self.exit_order_manager.current_market_debit()
-            if current_debit is None:
-                return None
-
-            threshold = self.trade["entry_credit"] * self.MARK_MULTIPLE
-            if current_debit >= threshold:
-                return (
-                    f"Condor mark ${current_debit:.2f} >= "
-                    f"{self.MARK_MULTIPLE:.1f}x entry credit ${self.trade['entry_credit']:.2f}"
-                )
-            return None
-
         chain = self.current_slice.option_chains.get(self.spxw)
         if not chain:
             return None
@@ -349,27 +311,19 @@ class Spxw7dteRepairExperiment(QCAlgorithm):
             return None
 
         max_delta = max(call_delta or 0.0, put_delta or 0.0)
-        if self.TRIGGER_MODE == "delta" and max_delta >= self.DELTA_THRESHOLD:
+        if max_delta >= self.DELTA_THRESHOLD:
             return (
                 f"Short delta {max_delta:.3f} >= "
                 f"{self.DELTA_THRESHOLD:.2f}"
             )
 
-        if self.TRIGGER_MODE == "delta_or_breach":
-            spx_price = self.securities[self.spx].price
-            short_call_strike = self.securities[self.trade["short_call"]].strike
-            short_put_strike = self.securities[self.trade["short_put"]].strike
-            if max_delta >= self.DELTA_THRESHOLD:
-                return (
-                    f"Short delta {max_delta:.3f} >= "
-                    f"{self.DELTA_THRESHOLD:.2f}"
-                )
-            if spx_price >= short_call_strike:
-                return (
-                    f"SPX {spx_price:.2f} breached short call strike {short_call_strike:.2f}"
-                )
-            if spx_price <= short_put_strike:
-                return f"SPX {spx_price:.2f} breached short put strike {short_put_strike:.2f}"
+        spx_price = self.securities[self.spx].price
+        short_call_strike = self.securities[self.trade["short_call"]].strike
+        short_put_strike = self.securities[self.trade["short_put"]].strike
+        if spx_price >= short_call_strike:
+            return f"SPX {spx_price:.2f} breached short call strike {short_call_strike:.2f}"
+        if spx_price <= short_put_strike:
+            return f"SPX {spx_price:.2f} breached short put strike {short_put_strike:.2f}"
 
         return None
 
@@ -394,85 +348,13 @@ class Spxw7dteRepairExperiment(QCAlgorithm):
             return None
 
     def build_repair_plan(self, trigger_reason):
-        if self.ACTION == "close":
-            self.debug(f"REPAIR TRIGGERED: {trigger_reason} | action=close")
-            return {
-                "action": "close",
-                "stage": "exiting",
-                "original_expiry": self.trade["expiry"].date(),
-                "exit_reason": f"Repair close: {trigger_reason}",
-            }
-
-        target_expiry = self.trade["expiry"].date()
-        chain = self.current_slice.option_chains.get(self.spxw)
-        if not chain:
-            self.debug("REPAIR SKIPPED: no chain available to validate repair reentry")
-            return None
-
-        if self.ACTION == "roll_forward":
-            target_expiry = self.next_available_chain_expiry(target_expiry, chain)
-            if target_expiry is None:
-                self.debug(
-                    "REPAIR SKIPPED: no later valid expiry available for roll-forward action"
-                )
-                return None
-
-        if not self.can_find_repair_entry(target_expiry):
-            self.debug(
-                f"REPAIR SKIPPED: no replacement condor found for {self.ACTION} "
-                f"at expiry {target_expiry}"
-            )
-            return None
-
-        self.debug(
-            f"REPAIR TRIGGERED: {trigger_reason} | action={self.ACTION} | "
-            f"target_expiry={target_expiry}"
-        )
+        self.debug(f"REPAIR TRIGGERED: {trigger_reason} | action=close")
         return {
-            "action": self.ACTION,
+            "action": "close",
             "stage": "exiting",
             "original_expiry": self.trade["expiry"].date(),
-            "target_expiry": target_expiry,
-            "exit_reason": (
-                f"Repair {self.ACTION}: {trigger_reason} | "
-                f"target_expiry={target_expiry}"
-            ),
+            "exit_reason": f"Repair close: {trigger_reason}",
         }
-
-    def can_find_repair_entry(self, target_expiry):
-        chain = self.current_slice.option_chains.get(self.spxw)
-        if not chain:
-            return False
-
-        contracts = [contract for contract in chain if contract.expiry.date() == target_expiry]
-        if not contracts:
-            return False
-
-        spx_price = self.securities[self.spx].price
-        return self.iron_condor_finder.find_iron_condor(contracts, spx_price) is not None
-
-    def attempt_repair_reentry(self):
-        if (
-            self.position_entered
-            or self.entry_order_manager.is_pending
-            or self.exit_order_manager.is_pending
-        ):
-            return
-
-        if not self.is_regular_market_hours():
-            self.pending_repair = None
-            return
-
-        target_expiry = self.pending_repair.get("target_expiry")
-        if target_expiry is None:
-            return
-
-        submitted = self.submit_entry_for_expiry(
-            target_expiry,
-            f"repair reentry ({self.pending_repair['action']})",
-        )
-        if submitted:
-            self.pending_repair["stage"] = "entry_submitted"
 
     def on_order_event(self, order_event):
         filled_trade = self.entry_order_manager.handle_order_event(order_event)
@@ -486,16 +368,10 @@ class Spxw7dteRepairExperiment(QCAlgorithm):
             return
 
         if self.exit_order_manager.handle_order_event(order_event):
-            prior_repair = self.pending_repair
             self.trade = None
             self.position_entered = False
             self.blocked_entry_date = self.time.date()
-
-            if prior_repair and prior_repair["action"] in ("recenter", "roll_forward"):
-                prior_repair["stage"] = "awaiting_reentry"
-                self.pending_repair = prior_repair
-            else:
-                self.pending_repair = None
+            self.pending_repair = None
 
     def reset_after_expiry(self):
         if not self.trade or not self.position_entered:

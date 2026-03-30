@@ -116,19 +116,10 @@ class IronCondorEntryOrderManager:
                 self.pending_entry["submitted_at"] = self.algorithm.time
                 return
 
-            self.algorithm.debug(
-                f"ENTRY WALK: market credit still ${market_credit:.2f}, "
-                "walking limit by another $0.05"
-            )
             new_offset = max(0.0, self.pending_entry["offset"] - self.walk_increment)
             self.replace(market_credit, new_offset, "walking entry limit")
             return
 
-        self.algorithm.debug(
-            f"ENTRY UPDATE: market credit changed from "
-            f"${self.pending_entry['last_market_credit']:.2f} to ${market_credit:.2f}, "
-            "replacing limit order"
-        )
         self.replace(market_credit, self.entry_limit_offset, "repricing entry")
 
     def handle_order_event(self, order_event):
@@ -191,7 +182,6 @@ class IronCondorEntryOrderManager:
             "expiry_date": expiry_date,
             "entry_spx_price": entry_spx_price,
         }
-        self.algorithm.debug(f"ENTRY REPLACED: new limit=${limit_price:.2f}")
 
     def cancel(self, reason):
         if not self.pending_entry:

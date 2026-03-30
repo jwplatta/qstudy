@@ -29,7 +29,7 @@ class Spxw7dteRepairExperiment(QCAlgorithm):
     WINDOW_END = (16, 0)
 
     START_DATE = (2022, 1, 1)
-    END_DATE = (2026, 3, 26)
+    END_DATE = (2025, 12, 31)
     INITIAL_CASH = 50000
     MIN_DTE = 6
     MAX_DTE = 10
@@ -219,10 +219,6 @@ class Spxw7dteRepairExperiment(QCAlgorithm):
     def submit_entry_for_expiry(self, target_expiry, reason):
         chain = self.current_slice.option_chains.get(self.spxw)
         if not chain:
-            self.debug(
-                f"{self.time.date()} {self.time.strftime('%H:%M')} - "
-                "No option chain available"
-            )
             if reason == "baseline entry":
                 self.schedule_retry()
             return False
@@ -231,18 +227,10 @@ class Spxw7dteRepairExperiment(QCAlgorithm):
         if not contracts:
             next_expiry = self.next_available_chain_expiry(target_expiry, chain)
             if next_expiry and reason == "baseline entry":
-                self.debug(
-                    f"{self.time.date()} {self.time.strftime('%H:%M')} - "
-                    f"No contracts expiring on {target_expiry}, advancing to {next_expiry}"
-                )
                 target_expiry = next_expiry
                 contracts = [x for x in chain if x.expiry.date() == target_expiry]
 
         if not contracts:
-            self.debug(
-                f"{self.time.date()} {self.time.strftime('%H:%M')} - "
-                f"No contracts expiring on {target_expiry}"
-            )
             if reason == "baseline entry":
                 self.schedule_retry()
             return False
@@ -250,19 +238,11 @@ class Spxw7dteRepairExperiment(QCAlgorithm):
         spx_price = self.securities[self.spx].price
         result = self.iron_condor_finder.find_iron_condor(contracts, spx_price)
         if not result:
-            self.debug(
-                f"{self.time.date()} {self.time.strftime('%H:%M')} - "
-                f"No valid iron condor found for {target_expiry} during {reason}"
-            )
             if reason == "baseline entry":
                 self.schedule_retry()
             return False
 
         call_spread, put_spread, tweak_count = result
-        self.debug(
-            f"{self.time.date()} {self.time.strftime('%H:%M')} - "
-            f"Found valid iron condor after {tweak_count} tweaks for {reason}"
-        )
         self.entry_order_manager.submit_entry_order(
             call_spread, put_spread, spx_price, target_expiry
         )
@@ -308,7 +288,6 @@ class Spxw7dteRepairExperiment(QCAlgorithm):
 
         market_debit = self.exit_order_manager.current_market_debit()
         if market_debit is None:
-            self.debug("REPAIR SKIPPED: missing debit quote for current condor")
             return
 
         self.pending_repair = repair_plan
@@ -408,14 +387,6 @@ class Spxw7dteRepairExperiment(QCAlgorithm):
         if not chain:
             self.debug("REPAIR SKIPPED: no chain available to validate repair reentry")
             return None
-
-        if self.ACTION == "roll_forward":
-            target_expiry = self.next_available_chain_expiry(target_expiry, chain)
-            if target_expiry is None:
-                self.debug(
-                    "REPAIR SKIPPED: no later valid expiry available for roll-forward action"
-                )
-                return None
 
         if not self.can_find_repair_entry(target_expiry):
             self.debug(
