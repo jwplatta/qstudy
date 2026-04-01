@@ -91,6 +91,74 @@ def compute_range_bucketed_stats(
     return stats
 
 
+def compute_range_group_stats(
+    trade_totals_with_market: pd.DataFrame,
+    range_threshold: float,
+    range_column: str = "range",
+    pnl_column: str = "value",
+    exit_reason_column: str = "exit_reason",
+) -> pd.DataFrame:
+    """
+    Group trades by range bucket and compute performance statistics per bucket.
+
+    Args:
+        trade_totals_with_market: DataFrame with market data merged
+        range_threshold: Threshold used to split trades into <= and > groups
+        range_column: Name of the range column to bucket by (default: 'range')
+        pnl_column: Name of P&L column (default: 'value')
+        exit_reason_column: Name of exit reason column (default: 'exit_reason')
+
+    Returns:
+        DataFrame indexed by range bucket with columns:
+            - trade_count
+            - win_rate
+            - mean_pnl
+            - avg_win_pnl
+            - avg_loss
+            - pct_max_loss_exits
+            - group_total_pnl
+            - total_pnl_contribution (raw total P&L by regime, not normalized)
+    """
+    df = trade_totals_with_market.copy()
+
+    low_label = f"< {range_threshold}"
+    high_label = f">= {range_threshold}"
+    range_values = df[range_column]
+
+    df["range_group"] = pd.NA
+    df.loc[range_values.notna() & (range_values < range_threshold), "range_group"] = low_label
+    df.loc[range_values.notna() & (range_values >= range_threshold), "range_group"] = high_label
+    df["range_group"] = pd.Categorical(
+        df["range_group"], categories=[low_label, high_label], ordered=True
+    )
+
+    grouped = df.groupby("range_group", observed=False)
+    group_count = grouped[pnl_column].count()
+
+    stats = pd.DataFrame(
+        {
+            "trade_count": group_count,
+            "win_rate": grouped[pnl_column].apply(lambda x: (x > 0).mean()),
+            "mean_pnl": grouped[pnl_column].mean(),
+            "avg_win_pnl": grouped[pnl_column].apply(
+                lambda x: x[x > 0].mean() if (x > 0).any() else 0.0
+            ),
+            "avg_loss": grouped[pnl_column].apply(
+                lambda x: x[x <= 0].mean() if (x <= 0).any() else 0.0
+            ),
+            "pct_max_loss_exits": grouped[exit_reason_column].apply(
+                lambda x: (x == "max_loss").mean()
+            ),
+        }
+    )
+    stats[["trade_count", "win_rate", "mean_pnl", "pct_max_loss_exits"]] = stats[
+        ["trade_count", "win_rate", "mean_pnl", "pct_max_loss_exits"]
+    ].fillna(0.0)
+    stats["total_pnl"] = stats["trade_count"] * stats["mean_pnl"]
+
+    return stats
+
+
 def compare_win_loss_market_context(
     trade_totals_with_market: pd.DataFrame, context_columns: list[str]
 ) -> pd.DataFrame:

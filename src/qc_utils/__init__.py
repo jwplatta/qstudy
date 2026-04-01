@@ -1,10 +1,7 @@
 """Backtest analysis utilities for QuantConnect order data."""
 
 # Data loading and transformation
-from .backtest_loader import (
-    build_trade_totals,
-    load_orders,
-)
+from .backtest_loader import build_trade_totals, load_orders, load_trades
 
 # Exit type analysis
 from .exit_analysis import (
@@ -17,6 +14,7 @@ from .exit_analysis import (
 from .market_context import (
     compare_win_loss_market_context,
     compute_range_bucketed_stats,
+    compute_range_group_stats,
     merge_market_data,
 )
 
@@ -41,6 +39,7 @@ from .tail_analysis import (
 
 __all__ = [
     # Data loading
+    "load_trades",
     "load_orders",
     "build_trade_totals",
     # Performance metrics
@@ -63,5 +62,6 @@ __all__ = [
     # Market context
     "merge_market_data",
     "compute_range_bucketed_stats",
+    "compute_range_group_stats",
     "compare_win_loss_market_context",
 ]
