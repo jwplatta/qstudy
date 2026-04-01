@@ -55,3 +55,7 @@ lean.json
 
 # work directoires
 /notebooks
+
+.codex/skills
+.claude/skills
+.gemini/skills
