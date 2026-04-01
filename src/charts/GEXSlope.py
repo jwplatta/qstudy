@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from ..utils.intraday import load_intraday_option_samples
+from utils.intraday import load_intraday_option_samples
 
 
 class GEXSlope:
@@ -147,9 +147,9 @@ class GEXSlope:
         self.gex_series = pd.DataFrame(gex_data).set_index("datetime").sort_index()
 
         # Calculate delta (slope) between samples
-        self.gex_series["gex_delta"] = (
-            self.gex_series["net_gex"] - self.gex_series["net_gex"].shift(self.lookback)
-        )
+        self.gex_series["gex_delta"] = self.gex_series["net_gex"] - self.gex_series[
+            "net_gex"
+        ].shift(self.lookback)
 
     def plot(self, figsize=(12, 6), save_path=None):
         """

@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from ..utils.black_scholes import bs_gamma
+from utils.black_scholes import bs_gamma
 
 
 class GEXPrice:

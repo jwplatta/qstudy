@@ -5,7 +5,7 @@ import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from ..utils.gex import row_gross_gex
+from utils.gex import row_gross_gex
 
 
 class GrossGEX:

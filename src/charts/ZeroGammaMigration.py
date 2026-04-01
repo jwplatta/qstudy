@@ -7,7 +7,7 @@ import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from ..utils.intraday import calculate_zero_gamma_line, load_intraday_option_samples
+from utils.intraday import calculate_zero_gamma_line, load_intraday_option_samples
 
 
 class ZeroGammaMigration:
