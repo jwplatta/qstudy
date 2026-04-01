@@ -14,7 +14,10 @@ dependencies = [
     "pandas>=2.3.3",
     "ta>=0.11.0",
     "streamlit>=1.50.0",
-    "python-dotenv>=1.0.1"
+    "python-dotenv>=1.0.1",
+    "scikit-learn",
+    "lean",
+    "simfin>=1.0.1",
 ]
 
 [dependency-groups]
