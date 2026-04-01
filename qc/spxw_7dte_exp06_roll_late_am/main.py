@@ -309,8 +309,10 @@ class Spxw7dteRepairExperiment(QCAlgorithm):
             )
 
         spx_price = self.securities[self.spx].price
-        short_call_strike = self.securities[self.trade["short_call"]].strike
-        short_put_strike = self.securities[self.trade["short_put"]].strike
+        short_call_strike = self.option_strike(self.trade["short_call"])
+        short_put_strike = self.option_strike(self.trade["short_put"])
+        if short_call_strike is None or short_put_strike is None:
+            return None
         if spx_price >= short_call_strike:
             return f"SPX {spx_price:.2f} breached short call strike {short_call_strike:.2f}"
         if spx_price <= short_put_strike:
@@ -335,6 +337,17 @@ class Spxw7dteRepairExperiment(QCAlgorithm):
 
         try:
             return abs(float(greeks.delta))
+        except (TypeError, ValueError):
+            return None
+
+    def option_strike(self, symbol):
+        option_id = getattr(symbol, "id", None)
+        strike_price = getattr(option_id, "strike_price", None)
+        if strike_price is None:
+            return None
+
+        try:
+            return float(strike_price)
         except (TypeError, ValueError):
             return None
 
