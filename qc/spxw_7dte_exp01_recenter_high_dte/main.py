@@ -58,10 +58,10 @@ class Spxw7dteRepairExperiment(QCAlgorithm):
 
         self.set_brokerage_model(BrokerageName.CHARLES_SCHWAB, AccountType.MARGIN)
         self.settings.seed_initial_prices = True
-        self.spx = self.add_index("SPX", Resolution.HOUR).symbol
+        self.spx = self.add_index("SPX", Resolution.MINUTE).symbol
 
         self.option = self.add_index_option(
-            self.spx, "SPXW", resolution=Resolution.HOUR, fill_forward=True
+            self.spx, "SPXW", resolution=Resolution.MINUTE, fill_forward=True
         )
         self.option.set_filter(
             lambda universe: universe.expiration(
