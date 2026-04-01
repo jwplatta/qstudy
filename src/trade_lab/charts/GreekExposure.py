@@ -183,7 +183,7 @@ class GreekExposure:
             strikes = g["K"].to_numpy(float)
             vega = g["vega"].to_numpy(float)
             if len(strikes) > 1:
-                g["vanna"] = np.gradient(vega, strikes)
+                g["vanna"] = -np.gradient(vega, strikes)
             else:
                 g["vanna"] = 0.0
             result.append(g)
@@ -207,10 +207,12 @@ class GreekExposure:
             g = group.sort_values("K").copy()
             strikes = g["K"].to_numpy(float)
             theta = g["theta"].to_numpy(float)
+
             if len(strikes) > 1:
-                g["charm"] = np.gradient(theta, strikes)
+                g["charm"] = -np.gradient(theta, strikes)
             else:
                 g["charm"] = 0.0
+
             result.append(g)
         return pd.concat(result, ignore_index=True)
 

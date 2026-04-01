@@ -76,7 +76,8 @@ class GEXPrice:
 
         if not files_by_expiration:
             raise ValueError(
-                f"No option chain files found with expirations between {self.start_date} and {end_dt.strftime('%Y-%m-%d')}"
+                f"No option chain files found with expirations between {self.start_date} "
+                f"and {end_dt.strftime('%Y-%m-%d')}"
             )
 
         latest_files = [file_info[1] for file_info in files_by_expiration.values()]
