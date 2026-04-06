@@ -337,13 +337,12 @@ class Spxw7dteRepairExperiment(QCAlgorithm):
         if contract is None:
             return None
 
-        greeks = getattr(contract, "greeks", None)
-        if greeks is None or greeks.delta is None:
-            return None
-
         try:
+            greeks = getattr(contract, "greeks", None)
+            if greeks is None or greeks.delta is None:
+                return None
             return abs(float(greeks.delta))
-        except (TypeError, ValueError):
+        except Exception:
             return None
 
     def option_strike(self, symbol):

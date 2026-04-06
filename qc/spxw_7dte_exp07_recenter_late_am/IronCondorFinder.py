@@ -34,12 +34,13 @@ class IronCondorFinder:
 
     def find_iron_condor(self, contracts, spx_price):
         puts = sorted(
-            [x for x in contracts if x.right == OptionRight.PUT],
+            [x for x in contracts if x.right == OptionRight.PUT and self.is_viable_contract(x)],
             key=lambda x: x.strike,
             reverse=True,
         )
         calls = sorted(
-            [x for x in contracts if x.right == OptionRight.CALL], key=lambda x: x.strike
+            [x for x in contracts if x.right == OptionRight.CALL and self.is_viable_contract(x)],
+            key=lambda x: x.strike,
         )
 
         if len(puts) < 2 or len(calls) < 2:
@@ -57,11 +58,11 @@ class IronCondorFinder:
 
     def calculate_straddle_price(self, contracts, spx_price):
         call_atm = min(
-            [c for c in contracts if c.right == OptionRight.CALL],
+            [c for c in contracts if c.right == OptionRight.CALL and self.has_valid_ask(c)],
             key=lambda x: abs(x.strike - spx_price),
         )
         put_atm = min(
-            [c for c in contracts if c.right == OptionRight.PUT],
+            [c for c in contracts if c.right == OptionRight.PUT and self.has_valid_ask(c)],
             key=lambda x: abs(x.strike - spx_price),
         )
 
@@ -86,7 +87,7 @@ class IronCondorFinder:
             "short_leg": short_leg,
             "long_leg": long_leg,
             "price": round(short_leg.bid_price - long_leg.ask_price, 2),
-            "delta": abs(short_leg.greeks.delta),
+            "delta": self.safe_abs_delta(short_leg),
             "side": side,
         }
 
@@ -171,15 +172,27 @@ class IronCondorFinder:
         if not contracts:
             return None
 
-        short_leg = next((c for c in contracts if c.strike == short_strike), None)
+        viable_contracts = [contract for contract in contracts if self.is_viable_contract(contract)]
+        if not viable_contracts:
+            return None
+
+        short_leg = next((c for c in viable_contracts if c.strike == short_strike), None)
         if not short_leg:
-            short_leg = min(contracts, key=lambda x: abs(x.strike - short_strike))
+            short_leg = min(viable_contracts, key=lambda x: abs(x.strike - short_strike))
 
         if side == "CALL":
-            valid_longs = [c for c in contracts if c.strike > short_leg.strike]
+            valid_longs = [
+                contract
+                for contract in viable_contracts
+                if contract.strike > short_leg.strike
+            ]
             target_long_strike = short_leg.strike + self.spread_width
         else:
-            valid_longs = [c for c in contracts if c.strike < short_leg.strike]
+            valid_longs = [
+                contract
+                for contract in viable_contracts
+                if contract.strike < short_leg.strike
+            ]
             target_long_strike = short_leg.strike - self.spread_width
 
         if not valid_longs:
@@ -193,9 +206,37 @@ class IronCondorFinder:
             "short_leg": short_leg,
             "long_leg": long_leg,
             "price": round(short_leg.bid_price - long_leg.ask_price, 2),
-            "delta": abs(short_leg.greeks.delta),
+            "delta": self.safe_abs_delta(short_leg),
             "side": side,
         }
+
+    def is_viable_contract(self, contract):
+        return (
+            self.has_valid_bid(contract)
+            and self.has_valid_ask(contract)
+            and self.safe_abs_delta(contract) is not None
+        )
+
+    def has_valid_bid(self, contract):
+        try:
+            return contract.bid_price is not None and float(contract.bid_price) > 0
+        except (TypeError, ValueError):
+            return False
+
+    def has_valid_ask(self, contract):
+        try:
+            return contract.ask_price is not None and float(contract.ask_price) > 0
+        except (TypeError, ValueError):
+            return False
+
+    def safe_abs_delta(self, contract):
+        try:
+            greeks = getattr(contract, "greeks", None)
+            if greeks is None or greeks.delta is None:
+                return None
+            return abs(float(greeks.delta))
+        except Exception:
+            return None
 
     def is_credit_balanced(self, call_credit, put_credit):
         smaller = min(call_credit, put_credit)
