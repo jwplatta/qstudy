@@ -26,8 +26,8 @@ htmlcov/
 *.csv
 *.xlsx
 *.parquet
-data/
-
+./data/
+!notebooks/data/**
 # OS
 .DS_Store
 Thumbs.db
@@ -52,9 +52,6 @@ lean.json
 /qc/**/config.json
 /qc/**/results.json
 /qc/**/backtests
-
-# work directoires
-/notebooks
 
 .codex/skills
 .claude/skills
