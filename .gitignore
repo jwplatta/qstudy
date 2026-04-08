@@ -28,6 +28,8 @@ htmlcov/
 *.parquet
 ./data/
 !notebooks/data/**
+qc/data
+
 # OS
 .DS_Store
 Thumbs.db
