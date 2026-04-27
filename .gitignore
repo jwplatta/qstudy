@@ -28,6 +28,8 @@ htmlcov/
 *.parquet
 ./data/
 !notebooks/data/**
+notebooks/scratch
+notebooks/out
 qc/data
 
 # OS
