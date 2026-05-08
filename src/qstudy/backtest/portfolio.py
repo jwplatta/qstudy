@@ -25,7 +25,7 @@ def liquidity_filter(
     return rank <= top_n
 
 
-def build_positions(
+def build_long_short_positions(
     signal: pd.DataFrame,
     n_long: int = 25,
     n_short: int = 25,
