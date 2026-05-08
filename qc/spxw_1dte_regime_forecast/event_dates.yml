@@ -1,0 +1,314 @@
+
+events:
+  ###################
+  ### 2021 EVENTS ###
+  ###################
+  # --- FOMC (rate decision = day 2 of meeting) ---
+  - date: "2021-01-27"
+    event_type: "fomc_rate_decision" # [oai_citation:0‡Federal Reserve](https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm)
+  - date: "2021-03-17"
+    event_type: "fomc_rate_decision" # [oai_citation:1‡Federal Reserve](https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm)
+  - date: "2021-04-28"
+    event_type: "fomc_rate_decision" # [oai_citation:2‡Federal Reserve](https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm)
+  - date: "2021-06-16"
+    event_type: "fomc_rate_decision" # [oai_citation:3‡Federal Reserve](https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm)
+  - date: "2021-07-28"
+    event_type: "fomc_rate_decision" # [oai_citation:4‡Federal Reserve](https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm)
+  - date: "2021-09-22"
+    event_type: "fomc_rate_decision" # [oai_citation:5‡Federal Reserve](https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm)
+  - date: "2021-11-03"
+    event_type: "fomc_rate_decision" # [oai_citation:6‡Federal Reserve](https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm)
+  - date: "2021-12-15"
+    event_type: "fomc_rate_decision" # [oai_citation:7‡Federal Reserve](https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm)
+
+  # --- BLS CPI release dates ---
+  - date: "2021-01-13"
+    event_type: "cpi" # [oai_citation:16‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2021/01_sched_list.htm)
+  - date: "2021-02-10"
+    event_type: "cpi" # [oai_citation:17‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2021/02_sched_list.htm)
+  - date: "2021-03-10"
+    event_type: "cpi" # [oai_citation:18‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2021/03_sched_list.htm)
+  - date: "2021-04-13"
+    event_type: "cpi" # [oai_citation:19‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2021/04_sched_list.htm)
+  - date: "2021-05-12"
+    event_type: "cpi" # [oai_citation:20‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2021/05_sched_list.htm)
+  - date: "2021-06-10"
+    event_type: "cpi" # [oai_citation:21‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2021/06_sched_list.htm)
+  - date: "2021-07-13"
+    event_type: "cpi" # [oai_citation:22‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2021/07_sched_list.htm)
+  - date: "2021-08-11"
+    event_type: "cpi" # [oai_citation:23‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2021/08_sched_list.htm)
+  - date: "2021-09-14"
+    event_type: "cpi" # [oai_citation:24‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2021/09_sched_list.htm)
+  - date: "2021-10-13"
+    event_type: "cpi" # [oai_citation:25‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2021/10_sched_list.htm)
+  - date: "2021-11-10"
+    event_type: "cpi" # [oai_citation:26‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2021/11_sched_list.htm)
+  - date: "2021-12-10"
+    event_type: "cpi" # [oai_citation:27‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2021/12_sched_list.htm)
+
+  # --- BLS Employment Situation release dates ---
+  - date: "2021-01-08"
+    event_type: "employment_situation" # [oai_citation:40‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2021/01_sched_list.htm)
+  - date: "2021-02-05"
+    event_type: "employment_situation" # [oai_citation:41‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2021/02_sched_list.htm)
+  - date: "2021-03-05"
+    event_type: "employment_situation" # [oai_citation:42‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2021/03_sched_list.htm)
+  - date: "2021-04-02"
+    event_type: "employment_situation" # [oai_citation:43‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2021/04_sched_list.htm)
+  - date: "2021-05-07"
+    event_type: "employment_situation" # [oai_citation:44‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2021/05_sched_list.htm)
+  - date: "2021-06-04"
+    event_type: "employment_situation" # [oai_citation:45‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2021/06_sched_list.htm)
+  - date: "2021-07-02"
+    event_type: "employment_situation" # [oai_citation:46‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2021/07_sched_list.htm)
+  - date: "2021-08-06"
+    event_type: "employment_situation" # [oai_citation:47‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2021/08_sched_list.htm)
+  - date: "2021-09-03"
+    event_type: "employment_situation" # [oai_citation:48‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2021/09_sched_list.htm)
+  - date: "2021-10-08"
+    event_type: "employment_situation" # [oai_citation:49‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2021/10_sched_list.htm)
+  - date: "2021-11-05"
+    event_type: "employment_situation" # [oai_citation:50‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2021/11_sched_list.htm)
+  - date: "2021-12-03"
+    event_type: "employment_situation" # [oai_citation:51‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2021/12_sched_list.htm)
+
+  ###################
+  ### 2022 EVENTS ###
+  ###################
+  - date: "2022-01-26"
+    event_type: "fomc_rate_decision" # [oai_citation:8‡Federal Reserve](https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm)
+  - date: "2022-03-16"
+    event_type: "fomc_rate_decision" # [oai_citation:9‡Federal Reserve](https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm)
+  - date: "2022-05-04"
+    event_type: "fomc_rate_decision" # [oai_citation:10‡Federal Reserve](https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm)
+  - date: "2022-06-15"
+    event_type: "fomc_rate_decision" # [oai_citation:11‡Federal Reserve](https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm)
+  - date: "2022-07-27"
+    event_type: "fomc_rate_decision" # [oai_citation:12‡Federal Reserve](https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm)
+  - date: "2022-09-21"
+    event_type: "fomc_rate_decision" # [oai_citation:13‡Federal Reserve](https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm)
+  - date: "2022-11-02"
+    event_type: "fomc_rate_decision" # [oai_citation:14‡Federal Reserve](https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm)
+  - date: "2022-12-14"
+    event_type: "fomc_rate_decision" # [oai_citation:15‡Federal Reserve](https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm)
+  - date: "2022-01-12"
+
+    event_type: "cpi" # [oai_citation:28‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2022/01_sched_list.htm)
+  - date: "2022-02-10"
+    event_type: "cpi" # [oai_citation:29‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2022/02_sched_list.htm)
+  - date: "2022-03-10"
+    event_type: "cpi" # [oai_citation:30‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2022/03_sched_list.htm)
+  - date: "2022-04-12"
+    event_type: "cpi" # [oai_citation:31‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2022/04_sched_list.htm)
+  - date: "2022-05-11"
+    event_type: "cpi" # [oai_citation:32‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2022/05_sched_list.htm)
+  - date: "2022-06-10"
+    event_type: "cpi" # [oai_citation:33‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2022/06_sched_list.htm)
+  - date: "2022-07-13"
+    event_type: "cpi" # [oai_citation:34‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2022/07_sched_list.htm)
+  - date: "2022-08-10"
+    event_type: "cpi" # [oai_citation:35‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2022/08_sched_list.htm)
+  - date: "2022-09-13"
+    event_type: "cpi" # [oai_citation:36‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2022/09_sched_list.htm)
+  - date: "2022-10-13"
+    event_type: "cpi" # [oai_citation:37‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2022/10_sched_list.htm)
+  - date: "2022-11-10"
+    event_type: "cpi" # [oai_citation:38‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2022/11_sched_list.htm)
+  - date: "2022-12-13"
+    event_type: "cpi" # [oai_citation:39‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2022/12_sched_list.htm)
+
+  - date: "2022-01-07"
+    event_type: "employment_situation" # for Dec 2021  [oai_citation:52‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2022/01_sched_list.htm)
+  - date: "2022-02-04"
+    event_type: "employment_situation" # for Jan 2022  [oai_citation:53‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2022/02_sched_list.htm)
+  - date: "2022-03-04"
+    event_type: "employment_situation" # for Feb 2022  [oai_citation:54‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2022/03_sched_list.htm)
+  - date: "2022-04-01"
+    event_type: "employment_situation" # for Mar 2022  [oai_citation:55‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2022/04_sched_list.htm)
+  - date: "2022-05-06"
+    event_type: "employment_situation" # for Apr 2022  [oai_citation:56‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2022/05_sched_list.htm)
+  - date: "2022-06-03"
+    event_type: "employment_situation" # for May 2022  [oai_citation:57‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2022/06_sched_list.htm)
+  - date: "2022-07-08"
+    event_type: "employment_situation" # for Jun 2022  [oai_citation:58‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2022/07_sched_list.htm)
+  - date: "2022-08-05"
+    event_type: "employment_situation" # for Jul 2022  [oai_citation:59‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2022/08_sched_list.htm)
+  - date: "2022-09-02"
+    event_type: "employment_situation" # for Aug 2022  [oai_citation:60‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2022/09_sched_list.htm)
+  - date: "2022-10-07"
+    event_type: "employment_situation" # for Sep 2022  [oai_citation:61‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2022/10_sched_list.htm)
+  - date: "2022-11-04"
+    event_type: "employment_situation" # for Oct 2022  [oai_citation:62‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2022/11_sched_list.htm)
+  - date: "2022-12-02"
+    event_type: "employment_situation" # for Nov 2022  [oai_citation:63‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2022/12_sched_list.htm)
+
+  ###################
+  ### 2023 EVENTS ###
+  ###################
+  # --- FOMC (rate decision = day 2 of meeting) 2023 ---
+  - date: "2023-02-01"
+    event_type: "fomc_rate_decision" # [oai_citation:1‡Federal Reserve](https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm)
+  - date: "2023-03-22"
+    event_type: "fomc_rate_decision" # [oai_citation:2‡Federal Reserve](https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm)
+  - date: "2023-05-03"
+    event_type: "fomc_rate_decision" # [oai_citation:3‡Federal Reserve](https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm)
+  - date: "2023-06-14"
+    event_type: "fomc_rate_decision" # [oai_citation:4‡Federal Reserve](https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm)
+  - date: "2023-07-26"
+    event_type: "fomc_rate_decision" # [oai_citation:5‡Federal Reserve](https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm)
+  - date: "2023-09-20"
+    event_type: "fomc_rate_decision" # [oai_citation:6‡Federal Reserve](https://www.federalreserve.gov/monetarypolicy/fomcpresconf20230920.htm)
+  - date: "2023-11-01"
+    event_type: "fomc_rate_decision" # [oai_citation:7‡IG](https://www.ig.com/en/financial-events/fomc-meeting)
+  - date: "2023-12-13"
+    event_type: "fomc_rate_decision" # [oai_citation:8‡Federal Reserve](https://www.federalreserve.gov/newsevents/pressreleases/2023-press-fomc.htm)
+
+  # --- BLS CPI release dates 2023 ---
+  - date: "2023-02-14"
+    event_type: "cpi" # [oai_citation:9‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2023/home.htm)
+  - date: "2023-03-14"
+    event_type: "cpi" # [oai_citation:10‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2023/home.htm)
+  - date: "2023-04-12"
+    event_type: "cpi" # [oai_citation:11‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2023/home.htm)
+  - date: "2023-05-10"
+    event_type: "cpi" # [oai_citation:12‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2023/home.htm)
+  - date: "2023-06-13"
+    event_type: "cpi" # [oai_citation:13‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2023/home.htm)
+  - date: "2023-07-12"
+    event_type: "cpi" # [oai_citation:14‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2023/home.htm)
+  - date: "2023-08-10"
+    event_type: "cpi" # [oai_citation:15‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2023/home.htm)
+  - date: "2023-09-13"
+    event_type: "cpi" # [oai_citation:16‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2023/home.htm)
+  - date: "2023-10-12"
+    event_type: "cpi" # [oai_citation:17‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2023/home.htm)
+  - date: "2023-11-14"
+    event_type: "cpi" # [oai_citation:18‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2023/home.htm)
+  - date: "2023-12-12"
+    event_type: "cpi" # [oai_citation:19‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2023/12_sched_list.htm)
+
+  # --- BLS Employment Situation – 2023 ---
+  - date: "2023-02-03"
+    event_type: "employment_situation" # [oai_citation:20‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2023/home.htm)
+  - date: "2023-03-10"
+    event_type: "employment_situation" # [oai_citation:21‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2023/home.htm)
+  - date: "2023-04-07"
+    event_type: "employment_situation" # [oai_citation:22‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2023/home.htm)
+  - date: "2023-05-05"
+    event_type: "employment_situation" # [oai_citation:23‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2023/home.htm)
+  - date: "2023-06-02"
+    event_type: "employment_situation" # [oai_citation:24‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2023/home.htm)
+  - date: "2023-07-07"
+    event_type: "employment_situation" # [oai_citation:25‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2023/home.htm)
+  - date: "2023-08-04"
+    event_type: "employment_situation" # [oai_citation:26‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2023/home.htm)
+  - date: "2023-09-01"
+    event_type: "employment_situation" # [oai_citation:27‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2023/home.htm)
+  - date: "2023-10-06"
+    event_type: "employment_situation" # [oai_citation:28‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2023/home.htm)
+  - date: "2023-11-03"
+    event_type: "employment_situation" # [oai_citation:29‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2023/home.htm)
+  - date: "2023-12-08"
+    event_type: "employment_situation" # [oai_citation:30‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2023/12_sched_list.htm)
+
+  ###################
+  ### 2024 EVENTS ###
+  ###################
+  # --- FOMC (rate decision = day 2 of meeting) 2024 ---
+  - date: "2024-01-31"
+    event_type: "fomc_rate_decision" # [oai_citation:1‡Federal Reserve](https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm)
+  - date: "2024-03-20"
+    event_type: "fomc_rate_decision" # [oai_citation:2‡Federal Reserve](https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm)
+  - date: "2024-05-01"
+    event_type: "fomc_rate_decision" # [oai_citation:3‡Federal Reserve](https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm)
+  - date: "2024-06-12"
+    event_type: "fomc_rate_decision" # [oai_citation:4‡profitf.com](https://www.profitf.com/calendars/fomc-meeting-schedule/)
+  - date: "2024-07-31"
+    event_type: "fomc_rate_decision" # [oai_citation:5‡profitf.com](https://www.profitf.com/calendars/fomc-meeting-schedule/)
+  - date: "2024-09-18"
+    event_type: "fomc_rate_decision" # [oai_citation:6‡profitf.com](https://www.profitf.com/calendars/fomc-meeting-schedule/)
+  - date: "2024-11-07"
+    event_type: "fomc_rate_decision" # [oai_citation:7‡profitf.com](https://www.profitf.com/calendars/fomc-meeting-schedule/)
+  - date: "2024-12-18"
+    event_type: "fomc_rate_decision" # [oai_citation:8‡Federal Reserve](https://www.federalreserve.gov/monetarypolicy/fomcpresconf20241218.htm)
+
+  # --- BLS CPI release dates 2024 ---
+  - date: "2024-06-12"
+    event_type: "cpi" # [oai_citation:9‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2024/home.htm)
+  - date: "2024-07-11"
+    event_type: "cpi" # [oai_citation:10‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2024/home.htm)
+  - date: "2024-08-14"
+    event_type: "cpi" # [oai_citation:11‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2024/08_sched_list.htm)
+  - date: "2024-09-11"
+    event_type: "cpi" # [oai_citation:12‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2024/09_sched.htm)
+  - date: "2024-10-10"
+    event_type: "cpi" # [oai_citation:13‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2024/home.htm)
+  - date: "2024-11-13"
+    event_type: "cpi" # [oai_citation:14‡Bureau of Labor Statistics](https://www.bls.gov/schedule/news_release/cpi.htm)
+  - date: "2024-12-11"
+    event_type: "cpi" # [oai_citation:15‡Bureau of Labor Statistics](https://www.bls.gov/schedule/news_release/cpi.htm)
+
+  # --- BLS Employment Situation release dates 2024 ---
+  - date: "2024-03-08"
+    event_type: "employment_situation" # [oai_citation:16‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2024/home.htm)
+  - date: "2024-05-03"
+    event_type: "employment_situation" # [oai_citation:17‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2024/home.htm)
+  - date: "2024-06-07"
+    event_type: "employment_situation" # [oai_citation:18‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2024/home.htm)
+  - date: "2024-07-05"
+    event_type: "employment_situation" # [oai_citation:19‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2024/home.htm)
+  - date: "2024-09-06"
+    event_type: "employment_situation" # [oai_citation:20‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2024/09_sched.htm)
+  - date: "2024-10-04"
+    event_type: "employment_situation" # [oai_citation:21‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2024/home.htm)
+  - date: "2024-12-06"
+    event_type: "employment_situation" # [oai_citation:22‡Bureau of Labor Statistics](https://www.bls.gov/schedule/news_release/empsit.htm)
+
+  ###################
+  ### 2025 EVENTS ###
+  ###################
+  # --- FOMC (rate decision = day 2 of meeting) 2025 ---
+  - date: "2025-01-29"
+    event_type: "fomc_rate_decision" # [oai_citation:1‡Federal Reserve](https://www.federalreserve.gov/newsevents/pressreleases/monetary20240809a.htm)
+  - date: "2025-03-19"
+    event_type: "fomc_rate_decision" # [oai_citation:2‡Federal Reserve](https://www.federalreserve.gov/newsevents/pressreleases/monetary20240809a.htm)
+  - date: "2025-05-07"
+    event_type: "fomc_rate_decision" # [oai_citation:3‡Federal Reserve](https://www.federalreserve.gov/newsevents/pressreleases/monetary20240809a.htm)
+  - date: "2025-06-18"
+    event_type: "fomc_rate_decision" # [oai_citation:4‡Federal Reserve](https://www.federalreserve.gov/newsevents/pressreleases/monetary20240809a.htm)
+  - date: "2025-07-30"
+    event_type: "fomc_rate_decision" # [oai_citation:5‡Federal Reserve](https://www.federalreserve.gov/newsevents/pressreleases/monetary20240809a.htm)
+  - date: "2025-09-17"
+    event_type: "fomc_rate_decision" # [oai_citation:6‡Federal Reserve](https://www.federalreserve.gov/newsevents/pressreleases/monetary20240809a.htm)
+  - date: "2025-10-29"
+    event_type: "fomc_rate_decision" # [oai_citation:7‡Federal Reserve](https://www.federalreserve.gov/newsevents/pressreleases/monetary20240809a.htm)
+  - date: "2025-12-10"
+    event_type: "fomc_rate_decision" # [oai_citation:8‡Federal Reserve](https://www.federalreserve.gov/newsevents/pressreleases/monetary20240809a.htm)
+
+  # --- BLS CPI release dates 2025 ---
+  - date: "2025-05-13"
+    event_type: "cpi" # [oai_citation:9‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2025/home.htm)
+  - date: "2025-06-11"
+    event_type: "cpi" # [oai_citation:10‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2025/home.htm)
+  - date: "2025-07-15"
+    event_type: "cpi" # [oai_citation:11‡Bureau of Labor Statistics](https://www.bls.gov/schedule/news_release/cpi.htm)
+  - date: "2025-07-15"
+    event_type: "cpi" # [oai_citation:12‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2025/08_sched.htm)
+  - date: "2025-08-12"
+    event_type: "cpi" # [oai_citation:13‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2025/08_sched.htm)
+  - date: "2025-12-18"
+    event_type: "cpi" # [oai_citation:14‡Bureau of Labor Statistics](https://www.bls.gov/bls/2025-lapse-revised-release-dates.htm)
+
+  # --- BLS Employment Situation release dates 2025 ---
+  - date: "2025-05-02"
+    event_type: "employment_situation" # [oai_citation:15‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2025/home.htm)
+  - date: "2025-06-06"
+    event_type: "employment_situation" # [oai_citation:16‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2025/home.htm)
+  - date: "2025-07-03"
+    event_type: "employment_situation" # [oai_citation:17‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2025/home.htm)
+  - date: "2025-08-01"
+    event_type: "employment_situation" # [oai_citation:18‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2025/08_sched.htm)
+  # October 2025 employment report was not released due to data collection interruption from the federal shutdown (no official disposal)  [oai_citation:19‡Bureau of Labor Statistics](https://www.bls.gov/bls/2025-lapse-revised-release-dates.htm)
+  - date: "2025-12-16"
+    event_type: "employment_situation" # [oai_citation:20‡Bureau of Labor Statistics](https://www.bls.gov/schedule/2025/12_sched.htm)

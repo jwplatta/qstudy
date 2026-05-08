@@ -1,0 +1,4 @@
+MAJOR_INDEXES = []
+TECH_STOCKS = []
+SECTORS = []
+SP500 = []
