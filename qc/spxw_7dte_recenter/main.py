@@ -40,9 +40,9 @@ class Spxw7dteRecenter(QCAlgorithm):
         self.set_brokerage_model(BrokerageName.CHARLES_SCHWAB, AccountType.MARGIN)
         self.settings.seed_initial_prices = True
 
-        self.spx = self.add_index("SPX", Resolution.MINUTE).symbol
+        self.spx = self.add_index("SPX", Resolution.HOUR).symbol
         self.option = self.add_index_option(
-            self.spx, "SPXW", resolution=Resolution.MINUTE, fill_forward=True
+            self.spx, "SPXW", resolution=Resolution.HOUR, fill_forward=True
         )
         self.option.set_filter(
             lambda universe: universe.expiration(
@@ -322,9 +322,7 @@ class Spxw7dteRecenter(QCAlgorithm):
         )
         dte_at_trigger = (self.trade["expiry"].date() - self.time.date()).days
         unrealized_pnl = self.current_unrealized_pnl()
-        movement_type = self.classify_price_movement(
-            trigger["tested_side"], trigger["spx_price"]
-        )
+        movement_type = self.classify_price_movement(trigger["tested_side"], trigger["spx_price"])
 
         self.debug(
             "TRIGGER EVENT | "
