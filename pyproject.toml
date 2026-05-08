@@ -18,6 +18,11 @@ dependencies = [
     "scikit-learn",
     "lean",
     "simfin>=1.0.1",
+    "yfinance",
+    "seaborn",
+    "statsmodels",
+    "fredapi",
+    "tqdm>=4.67.3",
 ]
 
 [dependency-groups]
@@ -30,6 +35,12 @@ dev = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/qstudy"]
+
+[tool.hatch.build.targets.wheel.sources]
+"src" = ""
 
 [tool.ruff]
 line-length = 100
