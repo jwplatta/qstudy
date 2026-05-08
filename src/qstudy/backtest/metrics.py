@@ -68,15 +68,27 @@ def turnover(positions: pd.DataFrame) -> pd.Series:
     return positions.diff().abs().sum(axis=1)
 
 
+def information_ratio(
+    returns: pd.Series,
+    benchmark: pd.Series,
+    periods_per_year: int = 252,
+) -> float:
+    """Annualized information ratio: excess return over benchmark / tracking error."""
+    excess = returns - benchmark.reindex(returns.index).fillna(0)
+    return excess.mean() / excess.std() * np.sqrt(periods_per_year)
+
+
 def summary(
     returns: pd.Series,
     positions: pd.DataFrame | None = None,
+    benchmark: pd.Series | None = None,
     periods_per_year: int = 252,
 ) -> pd.Series:
     """Compute standard performance metrics.
 
     Returns a named Series with keys:
-      sharpe, ann_return, ann_vol, max_drawdown, max_drawdown_duration, [avg_daily_turnover]
+      sharpe, ann_return, ann_vol, max_drawdown, max_drawdown_duration,
+      [avg_daily_turnover], [benchmark_ann_return, benchmark_corr, information_ratio]
     """
     metrics: dict = {
         "sharpe": sharpe(returns, periods_per_year),
@@ -87,4 +99,11 @@ def summary(
     }
     if positions is not None:
         metrics["avg_daily_turnover"] = turnover(positions).mean()
+
+    if benchmark is not None:
+        bm = benchmark.squeeze().reindex(returns.index).fillna(0)
+        metrics["benchmark_ann_return"] = annualized_return(bm, periods_per_year)
+        metrics["benchmark_sharpe"] = sharpe(bm, periods_per_year)
+        metrics["benchmark_corr"] = returns.corr(bm)
+        metrics["information_ratio"] = information_ratio(returns, bm, periods_per_year)
     return pd.Series(metrics)
