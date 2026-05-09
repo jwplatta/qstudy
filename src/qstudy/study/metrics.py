@@ -34,19 +34,40 @@ def max_drawdown(returns: pd.Series) -> float:
     return drawdown_series(returns).min()
 
 
-def max_drawdown_duration(returns: pd.Series) -> int:
-    """Longest number of days spent below a prior equity peak (in trading days)."""
+def max_drawdown_duration(
+    returns: pd.Series,
+) -> tuple[int, tuple[pd.Timestamp, pd.Timestamp] | None]:
+    """Longest number of days spent below a prior equity peak.
+
+    Returns:
+        (duration, (start_date, end_date)) where duration is in trading days and
+        the dates are the inclusive bounds of the longest drawdown window.
+        Returns (0, None) if there is no drawdown.
+    """
     dd = drawdown_series(returns)
     in_drawdown = dd < 0
     max_dur = 0
     current_dur = 0
-    for val in in_drawdown:
+    best_start_idx: int | None = None
+    current_start_idx: int | None = None
+
+    for i, val in enumerate(in_drawdown):
         if val:
+            if current_dur == 0:
+                current_start_idx = i
             current_dur += 1
-            max_dur = max(max_dur, current_dur)
+            if current_dur > max_dur:
+                max_dur = current_dur
+                best_start_idx = current_start_idx
         else:
             current_dur = 0
-    return max_dur
+
+    if max_dur == 0 or best_start_idx is None:
+        return (0, None)
+
+    start_date = returns.index[best_start_idx]
+    end_date = returns.index[best_start_idx + max_dur - 1]
+    return (max_dur, (start_date, end_date))
 
 
 def rolling_sharpe(
@@ -88,15 +109,20 @@ def summary(
 
     Returns a named Series with keys:
       sharpe, ann_return, ann_vol, max_drawdown, max_drawdown_duration,
-      [avg_daily_turnover], [benchmark_ann_return, benchmark_corr, information_ratio]
+      [max_drawdown_start, max_drawdown_end], [avg_daily_turnover],
+      [benchmark_ann_return, benchmark_corr, information_ratio]
     """
+    dur, date_range = max_drawdown_duration(returns)
     metrics: dict = {
         "sharpe": sharpe(returns, periods_per_year),
         "ann_return": annualized_return(returns, periods_per_year),
         "ann_vol": annualized_vol(returns, periods_per_year),
         "max_drawdown": max_drawdown(returns),
-        "max_drawdown_duration": max_drawdown_duration(returns),
+        "max_drawdown_duration": dur,
     }
+    if date_range is not None:
+        metrics["max_drawdown_start"] = date_range[0]
+        metrics["max_drawdown_end"] = date_range[1]
     if positions is not None:
         metrics["avg_daily_turnover"] = turnover(positions).mean()
 

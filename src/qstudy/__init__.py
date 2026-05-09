@@ -1,7 +1,7 @@
-from qstudy.backtest import metrics
-from qstudy.backtest.engine import run
-from qstudy.backtest.grid import param_grid
-from qstudy.backtest.portfolio import build_positions, liquidity_filter, rebalance
+from qstudy.study import metrics
+from qstudy.study.engine import run
+from qstudy.study.grid import param_grid
+from qstudy.study.portfolio import build_long_short_positions, liquidity_filter, rebalance
 from qstudy.charts import (
     corr_heatmap,
     drawdown_plot,
@@ -12,7 +12,12 @@ from qstudy.charts import (
 )
 from qstudy.data.loader import download
 from qstudy.signals.factors import residualize
-from qstudy.signals.filters import momentum_context_filter, vol_filter, volume_zscore_filter
+from qstudy.signals.filters import (
+    momentum_context_filter,
+    vix_contango_filter,
+    vol_filter,
+    volume_zscore_filter,
+)
 
 __all__ = [
     # data
@@ -21,10 +26,11 @@ __all__ = [
     "vol_filter",
     "volume_zscore_filter",
     "momentum_context_filter",
+    "vix_contango_filter",
     "residualize",
-    # backtest
+    # study
     "liquidity_filter",
-    "build_positions",
+    "build_long_short_positions",
     "rebalance",
     "run",
     "param_grid",

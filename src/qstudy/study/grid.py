@@ -6,7 +6,7 @@ from collections.abc import Callable
 import pandas as pd
 from tqdm import tqdm
 
-from qstudy.backtest import metrics as _metrics
+from qstudy.study import metrics as _metrics
 
 
 def param_grid(

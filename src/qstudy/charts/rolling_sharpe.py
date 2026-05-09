@@ -3,7 +3,7 @@ from __future__ import annotations
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from qstudy.backtest.metrics import rolling_sharpe as _rolling_sharpe
+from qstudy.study.metrics import rolling_sharpe as _rolling_sharpe
 
 
 def rolling_sharpe_plot(
