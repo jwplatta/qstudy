@@ -65,7 +65,7 @@ def rebalance(
     """Apply a rebalance schedule: keep positions only every N rows, forward-fill between.
 
     Args:
-        positions: Output of build_positions() (dates x tickers).
+        positions: Output of build_long_short_positions() (dates x tickers).
         every:     Rebalance every N trading days (e.g. 5 = weekly, 21 = monthly).
                    Default 5. Use 1 for daily (no-op).
 

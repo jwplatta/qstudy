@@ -38,7 +38,7 @@ def param_heatmap(
     """Pivot a param_grid() results DataFrame into a 2D heatmap.
 
     Args:
-        results_df: Output of backtest.grid.param_grid().
+        results_df: Output of study.grid.param_grid().
         row_param:  Column name to use as heatmap rows.
         col_param:  Column name to use as heatmap columns.
         metric:     Metric column to visualize (default 'sharpe').

@@ -3,7 +3,7 @@ from __future__ import annotations
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from qstudy.backtest.metrics import drawdown_series, max_drawdown
+from qstudy.study.metrics import drawdown_series, max_drawdown
 
 
 def drawdown_plot(

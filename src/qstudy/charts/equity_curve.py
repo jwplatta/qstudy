@@ -3,7 +3,7 @@ from __future__ import annotations
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from qstudy.backtest.metrics import sharpe
+from qstudy.study.metrics import sharpe
 
 
 def equity_curve(

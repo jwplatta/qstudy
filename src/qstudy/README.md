@@ -96,10 +96,10 @@ ret_filtered = returns_df.where(liq_mask)
 Ranks signal cross-sectionally, selects top `n_long` as `+1` and bottom `n_short` as `-1`, normalizes to dollar-neutral (abs weights sum to 1).
 
 ```python
-positions = qs.build_positions(signal, n_long=25, n_short=25)
+positions = qs.build_long_short_positions(signal, n_long=25, n_short=25)
 ```
 
-> **Note:** `NaN` signals are ranked last (`na_option='bottom'`), so assets outside the liquidity mask will land in the short bucket. Always apply `liquidity_filter` before `build_positions`.
+> **Note:** `NaN` signals are ranked last (`na_option='bottom'`), so assets outside the liquidity mask will land in the short bucket. Always apply `liquidity_filter` before `build_long_short_positions`.
 
 ### Rebalance
 
@@ -130,14 +130,15 @@ qs.metrics.sharpe(port_ret)                  # annualized Sharpe
 qs.metrics.annualized_return(port_ret)       # CAGR
 qs.metrics.annualized_vol(port_ret)          # annualized volatility
 qs.metrics.max_drawdown(port_ret)            # peak-to-trough (negative fraction)
-qs.metrics.max_drawdown_duration(port_ret)   # longest days below prior peak
+qs.metrics.max_drawdown_duration(port_ret)   # (days, (start_date, end_date)) | (0, None)
 qs.metrics.drawdown_series(port_ret)         # full drawdown time series
 qs.metrics.rolling_sharpe(port_ret, window=90)
 qs.metrics.turnover(positions)               # daily one-way turnover
 
 # All at once
 qs.metrics.summary(port_ret, positions)
-# sharpe, ann_return, ann_vol, max_drawdown, max_drawdown_duration, avg_daily_turnover
+# sharpe, ann_return, ann_vol, max_drawdown, max_drawdown_duration,
+# max_drawdown_start, max_drawdown_end, avg_daily_turnover
 ```
 
 ---
@@ -168,7 +169,7 @@ def run_backtest(params):
     signal = -returns_df.rolling(params["window"]).mean().shift(1)
     signal = qs.vol_filter(signal, returns_df, vol_window=params["vol_wind"], quantile=params["qt"])
     signal = signal.where(liq_mask)
-    positions = qs.build_positions(signal, n_long=25, n_short=25)
+    positions = qs.build_long_short_positions(signal, n_long=25, n_short=25)
     return qs.run(positions, ret_filtered)
 
 results = qs.param_grid(
@@ -204,7 +205,7 @@ signal = qs.volume_zscore_filter(signal, volume_df, window=30, min_zscore_quanti
 liq_mask = qs.liquidity_filter(close_df, volume_df, top_n=250)
 signal = signal.where(liq_mask)
 
-positions = qs.build_positions(signal, n_long=25, n_short=25)
+positions = qs.build_long_short_positions(signal, n_long=25, n_short=25)
 port_ret = qs.run(positions, returns_df.where(liq_mask))
 
 print(qs.metrics.summary(port_ret, positions))
