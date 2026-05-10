@@ -58,6 +58,28 @@ def build_long_short_positions(
     return positions.div(abs_sum, axis=0).fillna(0.0)
 
 
+def build_long_only(
+    signal: pd.DataFrame,
+    n: int = 10,
+) -> pd.DataFrame:
+    """Convert a signal DataFrame into long-only equal-weighted positions.
+
+    Selects the top n assets by signal each day. Weights sum to 1.0.
+
+    Args:
+        signal: Signal DataFrame (dates x tickers). NaN = ineligible.
+        n:      Number of long positions per rebalance date.
+
+    Returns:
+        Float DataFrame of weights (dates x tickers), long-only, weights sum to 1.0.
+    """
+    ranks = signal.rank(axis=1, ascending=False, na_option="bottom")
+    mask = ranks <= n
+    positions = mask.astype(float)
+    count = positions.sum(axis=1).replace(0, float("nan"))
+    return positions.div(count, axis=0).fillna(0.0)
+
+
 def rebalance(
     positions: pd.DataFrame,
     every: int = 5,
