@@ -2,6 +2,8 @@ MAJOR_INDEXES = ["SPY", "QQQ", "DIA", "IWM"]
 
 SECTOR_ETFS = ["XLC", "XLY", "XLP", "XLE", "XLF", "XLV", "XLI", "XLK", "XLB", "XLRE", "XLU"]
 
+VOL_INDEXES = ["^VIX", "^VIX9D", "^VIX1D"]
+
 SP500 = [
     "MMM",
     "AOS",
