@@ -10,6 +10,8 @@ from pathlib import Path
 import pandas as pd
 from tqdm import tqdm
 
+import qstudy.study.engine as engine
+import qstudy.study.metrics as metrics
 from qstudy.data.loader import StudyData
 from qstudy.signals.factors import residualize
 from qstudy.signals.filters import (
@@ -18,10 +20,10 @@ from qstudy.signals.filters import (
     vol_filter,
     volume_zscore_filter,
 )
-import qstudy.study.engine as engine
-import qstudy.study.metrics as metrics
 from qstudy.study.portfolio import (
     build_long_only as _build_long_only,
+)
+from qstudy.study.portfolio import (
     build_long_short_positions,
     liquidity_filter,
     rebalance,
@@ -161,6 +163,7 @@ class Study:
         Args:
             window: Lookback in trading days.
         """
+
         def fn(**cache):
             return -cache["_active_returns"].rolling(window).mean()
 
@@ -175,6 +178,7 @@ class Study:
         Args:
             window: Lookback in trading days.
         """
+
         def fn(**cache):
             return cache["_active_returns"].rolling(window).mean()
 
@@ -237,6 +241,7 @@ class Study:
             top_n:  Keep only the top N assets by rolling dollar volume.
             window: Lookback for rolling average dollar volume.
         """
+
         def fn(signal, **cache):
             mask = liquidity_filter(cache["close"], cache["volume"], top_n=top_n, window=window)
             # Store the mask so run() can apply it to returns before the engine
@@ -261,11 +266,14 @@ class Study:
             quantile:   Cross-sectional threshold percentile.
             keep:       'low' keeps assets below the quantile; 'high' keeps assets above.
         """
+
         def fn(signal, **cache):
-            returns = cache["residual_returns"] if cache.get("residual_returns") is not None else cache["returns"]
-            return vol_filter(
-                signal, returns, vol_window=vol_window, quantile=quantile, keep=keep
+            returns = (
+                cache["residual_returns"]
+                if cache.get("residual_returns") is not None
+                else cache["returns"]
             )
+            return vol_filter(signal, returns, vol_window=vol_window, quantile=quantile, keep=keep)
 
         self._append_signal_filter(fn, label=f"vol_filter(q={quantile}, keep={keep})")
         return self
@@ -281,6 +289,7 @@ class Study:
             window:              Lookback for rolling volume z-score.
             min_zscore_quantile: Keep assets above this cross-sectional quantile.
         """
+
         def fn(signal, **cache):
             return volume_zscore_filter(
                 signal, cache["volume"], window=window, min_zscore_quantile=min_zscore_quantile
@@ -303,8 +312,13 @@ class Study:
             window:           Lookback for medium-term momentum.
             max_abs_quantile: Filter out assets with abs-momentum above this quantile.
         """
+
         def fn(signal, **cache):
-            returns = cache["residual_returns"] if cache.get("residual_returns") is not None else cache["returns"]
+            returns = (
+                cache["residual_returns"]
+                if cache.get("residual_returns") is not None
+                else cache["returns"]
+            )
             return momentum_context_filter(
                 signal, returns, window=window, max_abs_quantile=max_abs_quantile
             )
@@ -324,6 +338,7 @@ class Study:
                        Download with ``qs.download(qs.VOL_INDEXES, ...)["close"]``.
             window:    Require contango for N consecutive days.
         """
+
         def fn(signal, **cache):
             return vix_contango_filter(signal, vix_close, window=window)
 
@@ -347,11 +362,14 @@ class Study:
             n_short:         Number of short positions.
             rebalance_every: Rebalance every N trading days (1 = daily).
         """
+
         def fn(signal):
             pos = build_long_short_positions(signal, n_long=n_long, n_short=n_short)
             return rebalance(pos, every=rebalance_every)
 
-        self._set_position_builder(fn, label=f"build_long_short(n_long={n_long}, n_short={n_short})")
+        self._set_position_builder(
+            fn, label=f"build_long_short(n_long={n_long}, n_short={n_short})"
+        )
         return self
 
     def build_long_only(self, n: int = 10, rebalance_every: int = 1) -> Study:
@@ -361,6 +379,7 @@ class Study:
             n:               Number of long positions.
             rebalance_every: Rebalance every N trading days (1 = daily).
         """
+
         def fn(signal):
             pos = _build_long_only(signal, n=n)
             return rebalance(pos, every=rebalance_every)
@@ -398,6 +417,7 @@ class Study:
         Args:
             vol_window: Lookback for realized vol calculation.
         """
+
         def fn(positions, **cache):
             return apply_equal_vol(positions, vol_window=vol_window, **cache)
 
@@ -410,6 +430,7 @@ class Study:
         Args:
             window: Lookback for rolling Sharpe calculation.
         """
+
         def fn(positions, **cache):
             return apply_equal_sharpe(positions, window=window, **cache)
 
@@ -425,6 +446,7 @@ class Study:
             window: Rolling lookback in trading days.
             gamma:  Ridge regularization multiplier.
         """
+
         def fn(positions, **cache):
             return apply_optimal(positions, window=window, gamma=gamma, **cache)
 
@@ -473,9 +495,7 @@ class Study:
             if self._weighting_fn is not None:
                 pbar.set_postfix({"stage": "weighting"})
                 cache_kw = {k: v for k, v in self._cache.items() if k != "positions"}
-                self._cache["positions"] = self._weighting_fn(
-                    self._cache["positions"], **cache_kw
-                )
+                self._cache["positions"] = self._weighting_fn(self._cache["positions"], **cache_kw)
                 self._cache["_position_history"].append(
                     ("weighting", self._cache["positions"].copy())
                 )
@@ -530,6 +550,24 @@ class Study:
     def cache(self) -> dict:
         """The study cache containing all intermediate and final DataFrames."""
         return self._cache
+
+    def metrics_dict(self) -> dict:
+        """Return the metrics summary as a plain dictionary.
+
+        Requires :meth:`run` to have been called first.
+        """
+        self._require_run("metrics_dict")
+        return self._cache["metrics_summary"].to_dict()
+
+    def metrics_json(self) -> str:
+        """Return the metrics summary as a JSON string.
+
+        Requires :meth:`run` to have been called first.
+        """
+        import json
+
+        self._require_run("metrics_json")
+        return json.dumps(self._cache["metrics_summary"].to_dict(), default=str)
 
     def to_csv(self, path: str | Path) -> Study:
         """Write portfolio returns to a CSV file.
@@ -652,8 +690,10 @@ class Study:
     def _run_residualize(self) -> None:
         returns = self._cache["returns"]
         if self._cache["factor_returns"] is not None:
+            print("Using factors for residuals...")
             factor_returns = self._cache["factor_returns"]
         elif self._cache["benchmark"] is not None:
+            print("Using benchmark for residuals...")
             factor_returns = self._cache["benchmark"].to_frame()
         else:
             raise ValueError(
