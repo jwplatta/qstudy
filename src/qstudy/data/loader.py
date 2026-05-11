@@ -19,6 +19,9 @@ class StudyData:
 
     Attributes:
         tickers:     Tickers successfully downloaded (failed tickers are dropped).
+        open:        Adjusted open prices (dates x tickers).
+        high:        Adjusted high prices (dates x tickers).
+        low:         Adjusted low prices (dates x tickers).
         close:       Adjusted close prices (dates x tickers).
         volume:      Daily volume (dates x tickers).
         returns:     Daily pct-change returns, NaN filled with 0 (dates x tickers).
@@ -30,6 +33,18 @@ class StudyData:
     volume: pd.DataFrame
     returns: pd.DataFrame
     log_returns: pd.DataFrame
+    open: pd.DataFrame | None = None
+    high: pd.DataFrame | None = None
+    low: pd.DataFrame | None = None
+
+    def __post_init__(self) -> None:
+        # Backward compatibility: older tests and callers only populate close/volume/returns.
+        if self.open is None:
+            self.open = self.close.copy()
+        if self.high is None:
+            self.high = self.close.copy()
+        if self.low is None:
+            self.low = self.close.copy()
 
 
 def download(tickers: list[str] | str, start: str, end: str) -> StudyData:
@@ -51,22 +66,27 @@ def download(tickers: list[str] | str, start: str, end: str) -> StudyData:
     data = yf.download(
         tickers, start=start, end=end, auto_adjust=True, progress=False, multi_level_index=False
     )
-    close_raw = data["Close"]
-    # Single-ticker downloads return a Series; normalize to DataFrame
-    if isinstance(close_raw, pd.Series):
-        close_raw = close_raw.to_frame(name=tickers[0])
 
+    def normalize_frame(field: str) -> pd.DataFrame:
+        raw = data[field]
+        if isinstance(raw, pd.Series):
+            raw = raw.to_frame(name=tickers[0])
+        return raw
+
+    close_raw = normalize_frame("Close")
     close = close_raw.dropna(axis=1)
-    volume_raw = data["Volume"]
-    if isinstance(volume_raw, pd.Series):
-        volume_raw = volume_raw.to_frame(name=tickers[0])
-
-    volume = volume_raw[close.columns]
+    open_ = normalize_frame("Open")[close.columns]
+    high = normalize_frame("High")[close.columns]
+    low = normalize_frame("Low")[close.columns]
+    volume = normalize_frame("Volume")[close.columns]
     returns = close.pct_change().fillna(0)
     log_returns = np.log(close / close.shift(1))
 
     return StudyData(
         tickers=close.columns.tolist(),
+        open=open_,
+        high=high,
+        low=low,
         close=close,
         volume=volume,
         returns=returns,
