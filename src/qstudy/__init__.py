@@ -6,8 +6,8 @@ from qstudy.charts import (
     rolling_sharpe_plot,
     summary_plot,
 )
-from qstudy.data.loader import StudyData, download
-from qstudy.signals.factors import residualize
+from qstudy.data.loader import StudyData, download, get_sector_map
+from qstudy.signals.factors import BarraLiteFactorModel, cross_sectional_residualize, residualize
 from qstudy.signals.filters import (
     momentum_context_filter,
     vix_contango_filter,
@@ -20,7 +20,10 @@ from qstudy.study.grid import param_grid
 from qstudy.study.portfolio import (
     build_long_only,
     build_long_short_positions,
+    liquidity,
     liquidity_filter,
+    min_adv,
+    min_price,
     rebalance,
 )
 from qstudy.study.Study import Study
@@ -29,15 +32,21 @@ __all__ = [
     # data
     "download",
     "StudyData",
-    # signals
+    "get_sector_map",
+    # signals / factors
     "vol_filter",
     "volume_zscore_filter",
     "momentum_context_filter",
     "vix_contango_filter",
     "residualize",
+    "BarraLiteFactorModel",
+    "cross_sectional_residualize",
     # study
     "Study",
     "liquidity_filter",
+    "liquidity",
+    "min_price",
+    "min_adv",
     "build_long_short_positions",
     "build_long_only",
     "rebalance",
