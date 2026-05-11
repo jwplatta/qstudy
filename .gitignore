@@ -60,4 +60,5 @@ lean.json
 .codex/skills
 .claude/skills
 .gemini/skills
+.claude/settings.local.json
 NOTES.md
