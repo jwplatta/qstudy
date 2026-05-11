@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
+import time
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -69,3 +72,56 @@ def download(tickers: list[str] | str, start: str, end: str) -> StudyData:
         returns=returns,
         log_returns=log_returns,
     )
+
+
+def get_sector_map(
+    tickers: list[str],
+    cache_path: str | Path | None = None,
+    max_age_days: int = 30,
+) -> dict[str, str]:
+    """Fetch and disk-cache GICS sector classifications for a list of tickers.
+
+    Uses a JSON on-disk cache to avoid repeated yfinance HTTP calls. The cache
+    is invalidated after ``max_age_days``. Unknown sectors (missing or empty
+    ``info['sector']``) are stored as ``"Unknown"``.
+
+    Args:
+        tickers:      List of ticker symbols.
+        cache_path:   Path to the JSON cache file.
+                      Defaults to ``~/.qstudy/sector_map.json``.
+        max_age_days: Days before the on-disk cache is considered stale.
+
+    Returns:
+        Dict mapping ticker -> GICS sector string, e.g.
+        ``{"AAPL": "Technology", "JPM": "Financial Services", ...}``.
+    """
+    if cache_path is None:
+        cache_path = Path.home() / ".qstudy" / "sector_map.json"
+    else:
+        cache_path = Path(cache_path)
+
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Load existing cache if fresh enough
+    cached: dict[str, str] = {}
+    if cache_path.exists():
+        age_days = (time.time() - cache_path.stat().st_mtime) / 86400
+        if age_days < max_age_days:
+            with open(cache_path) as f:
+                cached = json.load(f)
+
+    # Fetch any tickers missing from cache
+    missing = [t for t in tickers if t not in cached]
+    if missing:
+        print(f"Fetching sector classifications for {len(missing)} tickers...")
+        for ticker in missing:
+            try:
+                info = yf.Ticker(ticker).info
+                cached[ticker] = info.get("sector") or "Unknown"
+            except Exception:
+                cached[ticker] = "Unknown"
+
+        with open(cache_path, "w") as f:
+            json.dump(cached, f)
+
+    return {t: cached.get(t, "Unknown") for t in tickers}
