@@ -1,5 +1,73 @@
+from __future__ import annotations
+
+from collections.abc import Callable
+
 import numpy as np
 import pandas as pd
+
+
+# ---------------------------------------------------------------------------
+# Tradeable constraint factories
+# ---------------------------------------------------------------------------
+
+
+def liquidity(top_n: int = 250, window: int = 60) -> Callable:
+    """Factory: keep top_n assets by rolling average dollar volume.
+
+    Returns a constraint function suitable for :meth:`Study.add_tradeable_constraint`.
+
+    Args:
+        top_n:  Number of most-liquid assets to keep eligible.
+        window: Lookback for rolling average dollar volume.
+
+    Returns:
+        Constraint function ``fn(close, volume, **cache) -> pd.DataFrame[bool]``.
+    """
+
+    def fn(close, volume, **cache):
+        return liquidity_filter(close, volume, top_n=top_n, window=window)
+
+    fn.__name__ = f"liquidity(top_n={top_n})"
+    return fn
+
+
+def min_price(threshold: float = 5.0) -> Callable:
+    """Factory: exclude assets whose close price is below a threshold.
+
+    Returns a constraint function suitable for :meth:`Study.add_tradeable_constraint`.
+
+    Args:
+        threshold: Minimum close price (using previous day's close, shift(1)).
+
+    Returns:
+        Constraint function ``fn(close, **cache) -> pd.DataFrame[bool]``.
+    """
+
+    def fn(close, **cache):
+        return close.shift(1) >= threshold
+
+    fn.__name__ = f"min_price(threshold={threshold})"
+    return fn
+
+
+def min_adv(threshold: float = 1_000_000.0) -> Callable:
+    """Factory: exclude assets whose rolling average daily dollar volume is below a threshold.
+
+    Returns a constraint function suitable for :meth:`Study.add_tradeable_constraint`.
+
+    Args:
+        threshold: Minimum 20-day average dollar volume.
+
+    Returns:
+        Constraint function ``fn(close, volume, **cache) -> pd.DataFrame[bool]``.
+    """
+
+    def fn(close, volume, **cache):
+        adv = (close * volume).rolling(20).mean()
+        return adv >= threshold
+
+    fn.__name__ = f"min_adv(threshold={threshold:.0f})"
+    return fn
 
 
 def liquidity_filter(
@@ -55,7 +123,7 @@ def build_long_short_positions(
 
     positions = long_mask.astype(float) - short_mask.astype(float)
     abs_sum = positions.abs().sum(axis=1).replace(0, float("nan"))
-    return positions.div(abs_sum, axis=0).fillna(0.0)
+    return positions.div(abs_sum, axis=0)
 
 
 def build_long_only(
@@ -77,7 +145,7 @@ def build_long_only(
     mask = ranks <= n
     positions = mask.astype(float)
     count = positions.sum(axis=1).replace(0, float("nan"))
-    return positions.div(count, axis=0).fillna(0.0)
+    return positions.div(count, axis=0)
 
 
 def rebalance(
@@ -86,15 +154,22 @@ def rebalance(
 ) -> pd.DataFrame:
     """Apply a rebalance schedule: keep positions only every N rows, forward-fill between.
 
+    NaN convention: position builders must return NaN for ineligible stocks (not 0.0).
+    This function preserves NaN values — it does not fill them with 0.0. The engine
+    treats NaN positions as zero when computing returns.
+
     Args:
-        positions: Output of build_long_short_positions() (dates x tickers).
+        positions: Positions DataFrame (dates x tickers). NaN = ineligible, not held.
         every:     Rebalance every N trading days (e.g. 5 = weekly, 21 = monthly).
-                   Default 5. Use 1 for daily (no-op).
+                   Use 1 for daily (no-op).
 
     Returns:
         Rebalanced positions DataFrame, same shape as input.
     """
+    if every == 1:
+        return positions
+
     mask = np.arange(len(positions)) % every == 0
     result = positions.copy()
     result[~mask] = np.nan
-    return result.ffill().fillna(0.0)
+    return result.ffill()

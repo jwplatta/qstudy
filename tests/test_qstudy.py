@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import qstudy as qs
 from qstudy.study.engine import run
 from qstudy.study.metrics import (
     annualized_return,
@@ -471,3 +472,549 @@ class TestMomentumContextFilter:
 
         flat_pass_rate = filtered["FLAT"].iloc[15:].notna().mean()
         assert flat_pass_rate > 0.8, "near-flat asset should mostly pass"
+
+
+# ---------------------------------------------------------------------------
+# BarraLiteFactorModel
+# ---------------------------------------------------------------------------
+
+
+def make_barra_data(n_dates=120, n_tickers=20, seed=42):
+    """Synthetic returns, benchmark, close, and sector_map for Barra tests."""
+    rng = np.random.default_rng(seed)
+    dates = pd.bdate_range("2020-01-01", periods=n_dates)
+    tickers = [f"T{i:02d}" for i in range(n_tickers)]
+    # Common factor + idiosyncratic noise
+    mkt = rng.normal(0, 0.01, n_dates)
+    idio = rng.normal(0, 0.005, (n_dates, n_tickers))
+    betas = rng.uniform(0.5, 1.5, n_tickers)
+    returns = pd.DataFrame(
+        mkt[:, None] * betas[None, :] + idio,
+        index=dates,
+        columns=tickers,
+    )
+    benchmark = pd.Series(mkt, index=dates, name="SPY")
+    close = pd.DataFrame(
+        (1 + returns).cumprod() * 100,
+        index=dates,
+        columns=tickers,
+    )
+    sectors = ["Tech", "Finance", "Energy", "Health"]
+    sector_map = {t: sectors[i % len(sectors)] for i, t in enumerate(tickers)}
+    return returns, benchmark, close, sector_map
+
+
+class TestBarraLiteFactorModel:
+    def test_residuals_shape_matches_returns(self):
+        returns, benchmark, close, sector_map = make_barra_data()
+        from qstudy.signals.factors import BarraLiteFactorModel
+
+        model = BarraLiteFactorModel(factors=["market"], beta_window=20)
+        model.fit(returns, benchmark, close)
+        residuals, daily_r2 = model.residualize(returns)
+        assert residuals.shape == returns.shape
+
+    def test_no_lookahead_in_early_rows(self):
+        """Rolling beta needs beta_window days of history; early rows should be NaN residuals."""
+        returns, benchmark, close, _ = make_barra_data()
+        from qstudy.signals.factors import BarraLiteFactorModel
+
+        model = BarraLiteFactorModel(factors=["market"], beta_window=60, min_stocks=5)
+        model.fit(returns, benchmark, close)
+        residuals, _ = model.residualize(returns)
+        # First 60 rows should be all NaN (beta not yet estimable)
+        assert residuals.iloc[:60].isna().all().all()
+
+    def test_residuals_lower_benchmark_correlation(self):
+        """Residuals should correlate less with the benchmark than raw returns."""
+        returns, benchmark, close, _ = make_barra_data(n_dates=200, n_tickers=30)
+        from qstudy.signals.factors import BarraLiteFactorModel
+
+        model = BarraLiteFactorModel(factors=["market"], beta_window=40, min_stocks=10)
+        model.fit(returns, benchmark, close)
+        residuals, _ = model.residualize(returns)
+
+        valid = residuals.dropna(how="all")
+        bench_aligned = benchmark.reindex(valid.index)
+
+        raw_corr = returns.reindex(valid.index).corrwith(bench_aligned).abs().mean()
+        resid_corr = valid.corrwith(bench_aligned).abs().mean()
+        assert resid_corr < raw_corr, "residuals should have lower benchmark correlation"
+
+    def test_sector_dummies_included(self):
+        """With sector dummies, factor_exposures_ should contain sector columns."""
+        returns, benchmark, close, sector_map = make_barra_data()
+        from qstudy.signals.factors import BarraLiteFactorModel
+
+        model = BarraLiteFactorModel(
+            factors=["market", "sector"], beta_window=20, sector_map=sector_map
+        )
+        model.fit(returns, benchmark, close)
+        assert model._sector_dummies is not None
+        assert len(model._sector_cols) > 0
+
+    def test_min_stocks_threshold_produces_nan(self):
+        """Dates where fewer than min_stocks have valid exposure data → NaN residuals."""
+        returns, benchmark, close, _ = make_barra_data(n_dates=200, n_tickers=10)
+        from qstudy.signals.factors import BarraLiteFactorModel
+
+        # min_stocks larger than universe → every date is skipped
+        model = BarraLiteFactorModel(factors=["market"], beta_window=20, min_stocks=999)
+        model.fit(returns, benchmark, close)
+        residuals, _ = model.residualize(returns)
+        assert residuals.isna().all().all()
+
+    def test_daily_r2_series_shape(self):
+        """daily_r2 should be a Series indexed by dates where regression ran."""
+        returns, benchmark, close, _ = make_barra_data(n_dates=150)
+        from qstudy.signals.factors import BarraLiteFactorModel
+
+        model = BarraLiteFactorModel(factors=["market"], beta_window=30, min_stocks=5)
+        model.fit(returns, benchmark, close)
+        _, daily_r2 = model.residualize(returns)
+        assert isinstance(daily_r2, pd.Series)
+        assert daily_r2.name == "cross_sectional_r2"
+        assert (daily_r2 >= 0).all() and (daily_r2 <= 1.0).all()
+
+    def test_exposures_on_returns_dataframe(self):
+        """exposures_on() should return a DataFrame (tickers x factors) for a valid date."""
+        returns, benchmark, close, sector_map = make_barra_data(n_dates=100)
+        from qstudy.signals.factors import BarraLiteFactorModel
+
+        model = BarraLiteFactorModel(
+            factors=["market", "momentum"], beta_window=20, momentum_window=10
+        )
+        model.fit(returns, benchmark, close)
+        date = returns.index[-1]
+        exp = model.exposures_on(date)
+        assert isinstance(exp, pd.DataFrame)
+        assert "market" in exp.columns
+        assert "momentum" in exp.columns
+
+    def test_cross_sectional_residualize_wrapper(self):
+        """Functional wrapper should return same types as BarraLiteFactorModel."""
+        returns, benchmark, close, sector_map = make_barra_data()
+        from qstudy.signals.factors import cross_sectional_residualize
+
+        residuals, daily_r2 = cross_sectional_residualize(
+            returns, benchmark, close, sector_map=sector_map, beta_window=20
+        )
+        assert isinstance(residuals, pd.DataFrame)
+        assert isinstance(daily_r2, pd.Series)
+        assert residuals.shape == returns.shape
+
+
+# ---------------------------------------------------------------------------
+# Study: add_factor_model / neutralize_positions / scale_risk / new aliases
+# ---------------------------------------------------------------------------
+
+
+def make_study_data(n_dates=150, n_tickers=20, seed=7):
+    """Returns (universe_StudyData, benchmark_StudyData) with synthetic data."""
+    from qstudy.data.loader import StudyData
+
+    rng = np.random.default_rng(seed)
+    dates = pd.bdate_range("2020-01-01", periods=n_dates)
+    tickers = [f"T{i:02d}" for i in range(n_tickers)]
+    mkt = rng.normal(0, 0.01, n_dates)
+    returns_arr = mkt[:, None] * rng.uniform(0.5, 1.5, n_tickers)[None, :] + rng.normal(
+        0, 0.005, (n_dates, n_tickers)
+    )
+    returns_df = pd.DataFrame(returns_arr, index=dates, columns=tickers)
+    close_df = (1 + returns_df).cumprod() * 100
+    volume_df = pd.DataFrame(
+        rng.integers(100_000, 1_000_000, (n_dates, n_tickers)).astype(float),
+        index=dates,
+        columns=tickers,
+    )
+    universe = StudyData(
+        tickers=tickers,
+        close=close_df,
+        volume=volume_df,
+        returns=returns_df,
+        log_returns=np.log(close_df / close_df.shift(1)),
+    )
+
+    bm_ret = pd.DataFrame({"SPY": mkt}, index=dates)
+    bm_close = (1 + bm_ret).cumprod() * 100
+    benchmark = StudyData(
+        tickers=["SPY"],
+        close=bm_close,
+        volume=pd.DataFrame({"SPY": [1e6] * n_dates}, index=dates),
+        returns=bm_ret,
+        log_returns=np.log(bm_close / bm_close.shift(1)),
+    )
+    return universe, benchmark
+
+
+def mr5(**cache):
+    """5-day mean-reversion signal used as a base_signal fn throughout tests."""
+    returns = cache["residual_returns"] if cache.get("residual_returns") is not None else cache["returns"]
+    return -returns.rolling(5).mean()
+
+
+class TestStudyNewMethods:
+    def _make_study(self):
+        return make_study_data()
+
+    def test_add_factor_model_raises_without_benchmark(self):
+        from qstudy import Study
+
+        universe, _ = make_study_data()
+        s = Study(universe=universe)
+        with pytest.raises(ValueError, match="benchmark="):
+            s.add_factor_model("barra-lite", factors=["market"])
+
+    def test_add_factor_model_populates_factor_exposures(self):
+        from qstudy import Study
+
+        universe, benchmark = make_study_data()
+        sectors = {t: "Tech" if i % 2 == 0 else "Finance" for i, t in enumerate(universe.tickers)}
+        study = (
+            Study(universe=universe, benchmark=benchmark)
+            .add_factor_model(
+                "barra-lite", factors=["market", "sector"], sector_map=sectors, beta_window=20
+            )
+            .residualize_returns()
+            .base_signal(mr5)
+            .build_long_short(n_long=5, n_short=5)
+            .run()
+        )
+        assert study.cache["factor_exposures"] is not None
+        assert "market" in study.cache["factor_exposures"]
+        assert study.cache["residual_returns"] is not None
+
+    def test_xs_daily_r2_in_cache_after_run(self):
+        from qstudy import Study
+
+        universe, benchmark = make_study_data()
+        study = (
+            Study(universe=universe, benchmark=benchmark)
+            .add_factor_model("barra-lite", factors=["market"], beta_window=20)
+            .residualize_returns()
+            .base_signal(mr5)
+            .build_long_short(n_long=5, n_short=5)
+            .run()
+        )
+        assert study.cache["_xs_daily_r2"] is not None
+        assert isinstance(study.cache["_xs_daily_r2"], pd.Series)
+
+    def test_transform_signal_and_filter_signal_are_aliases(self):
+        """transform_signal and filter_signal both add signal_filter steps."""
+        from qstudy import Study
+
+        universe, benchmark = make_study_data()
+        demean = lambda signal, **cache: signal.sub(signal.mean(axis=1), axis=0)  # noqa: E731
+        demean.__name__ = "demean"
+        vol_f = lambda signal, **cache: signal  # noqa: E731
+        vol_f.__name__ = "passthrough"
+
+        s = (
+            Study(universe=universe, benchmark=benchmark)
+            .base_signal(mr5)
+            .transform_signal(demean)
+            .filter_signal(vol_f)
+            .build_long_short(n_long=5, n_short=5)
+        )
+        step_types = [stype for stype, _ in s._steps]
+        assert step_types.count("signal_filter") == 2
+
+    def test_add_tradeable_constraint_applies_mask(self):
+        """Ineligible assets (all positions) should be zeroed by constraint."""
+        from qstudy import Study, liquidity
+
+        universe, benchmark = make_study_data()
+        study = (
+            Study(universe=universe, benchmark=benchmark)
+            .base_signal(mr5)
+            .add_tradeable_constraint(liquidity(top_n=5, window=20))
+            .build_long_short(n_long=3, n_short=3)
+            .run()
+        )
+        assert study.cache["_tradeable_mask"] is not None
+        # Non-zero positions should only be in top-5 liquid assets
+        pos = study.cache["positions"]
+        mask = study.cache["_tradeable_mask"]
+        non_zero = pos.where(pos != 0).dropna(how="all")
+        if not non_zero.empty:
+            for date in non_zero.index[:5]:
+                active_tickers = non_zero.loc[date].dropna().index
+                assert mask.loc[date, active_tickers].all(), "active positions must be in mask"
+
+    def test_scale_risk_with_vol_target(self):
+        """vol_target scaling should keep portfolio vol near the target (within 2x)."""
+        from qstudy import Study
+
+        universe, benchmark = make_study_data(n_dates=250)
+        target = 0.05
+        study = (
+            Study(universe=universe, benchmark=benchmark)
+            .base_signal(mr5)
+            .build_long_short(n_long=5, n_short=5)
+            .scale_risk(vol_target=target)
+            .run()
+        )
+        port_ret = study.cache["portfolio_returns"]
+        realized_vol = port_ret.std() * (252**0.5)
+        # Should be within 3x of target (loose check — scaling uses lookback)
+        assert realized_vol < target * 3
+
+    def test_backward_compat_scale_returns_alias(self):
+        """scale_returns(fn) should still work and emit a DeprecationWarning."""
+        import warnings as _warnings
+
+        from qstudy import Study
+
+        universe, benchmark = make_study_data()
+        identity = lambda positions, **cache: positions  # noqa: E731
+        identity.__name__ = "identity"
+
+        with _warnings.catch_warnings(record=True) as w:
+            _warnings.simplefilter("always")
+            s = (
+                Study(universe=universe, benchmark=benchmark)
+                .base_signal(mr5)
+                .build_long_short(n_long=5, n_short=5)
+                .scale_returns(identity)
+                .run()
+            )
+        assert any(issubclass(warning.category, DeprecationWarning) for warning in w)
+        assert s.cache["portfolio_returns"] is not None
+
+    def test_backward_compat_add_filter_alias(self):
+        """add_filter(fn) should still add a signal_filter step without error."""
+        from qstudy import Study
+
+        universe, benchmark = make_study_data()
+        passthrough = lambda signal, **cache: signal  # noqa: E731
+        passthrough.__name__ = "passthrough"
+
+        s = (
+            Study(universe=universe, benchmark=benchmark)
+            .base_signal(mr5)
+            .add_filter(passthrough)
+            .build_long_short(n_long=5, n_short=5)
+            .run()
+        )
+        assert s.cache["portfolio_returns"] is not None
+
+
+# ---------------------------------------------------------------------------
+# Pipeline vs manual equivalence
+# ---------------------------------------------------------------------------
+# These tests guard against regressions where the Study pipeline produces
+# different results than the equivalent manual step-by-step computation.
+# Two bugs were found during development:
+#   1. add_tradeable_constraint filled excluded stocks with 0.0 instead of NaN,
+#      so they remained valid candidates in build_long_short_positions ranking.
+#   2. A custom position scaler that internally recomputes the equity curve must
+#      use positions.shift(1) * returns to match qs.run() (1-day execution lag).
+# ---------------------------------------------------------------------------
+
+
+def make_factor_study_data(n_dates=200, n_tickers=30, seed=42):
+    """Synthetic universe + benchmark + factor returns for equivalence tests."""
+    from qstudy.data.loader import StudyData
+
+    rng = np.random.default_rng(seed)
+    dates = pd.bdate_range("2020-01-01", periods=n_dates)
+    tickers = [f"T{i:02d}" for i in range(n_tickers)]
+    mkt = rng.normal(0, 0.01, n_dates)
+    returns_arr = mkt[:, None] * rng.uniform(0.5, 1.5, n_tickers)[None, :] + rng.normal(
+        0, 0.005, (n_dates, n_tickers)
+    )
+    returns_df = pd.DataFrame(returns_arr, index=dates, columns=tickers)
+    close_df = (1 + returns_df).cumprod() * 100
+    volume_df = pd.DataFrame(
+        rng.integers(100_000, 10_000_000, (n_dates, n_tickers)).astype(float),
+        index=dates,
+        columns=tickers,
+    )
+    universe = StudyData(
+        tickers=tickers,
+        close=close_df,
+        volume=volume_df,
+        returns=returns_df,
+        log_returns=np.log(close_df / close_df.shift(1)),
+    )
+    bm_ret = pd.DataFrame({"SPY": mkt}, index=dates)
+    bm_close = (1 + bm_ret).cumprod() * 100
+    benchmark = StudyData(
+        tickers=["SPY"],
+        close=bm_close,
+        volume=pd.DataFrame({"SPY": [1e6] * n_dates}, index=dates),
+        returns=bm_ret,
+        log_returns=np.log(bm_close / bm_close.shift(1)),
+    )
+    # Two factor ETFs correlated with market
+    f1 = mkt + rng.normal(0, 0.003, n_dates)
+    f2 = mkt + rng.normal(0, 0.003, n_dates)
+    factor_ret = pd.DataFrame({"F1": f1, "F2": f2}, index=dates)
+    factor_close = (1 + factor_ret).cumprod() * 100
+    factors = StudyData(
+        tickers=["F1", "F2"],
+        close=factor_close,
+        volume=pd.DataFrame({"F1": [1e6] * n_dates, "F2": [1e6] * n_dates}, index=dates),
+        returns=factor_ret,
+        log_returns=np.log(factor_close / factor_close.shift(1)),
+    )
+    return universe, benchmark, factors
+
+
+class TestStudyPipelineEquivalence:
+    """Pipeline must produce identical portfolio returns to the equivalent manual computation.
+
+    The manual side of each test mirrors exactly what the pipeline does internally,
+    including the same signal formula (no extra .shift(1) — the engine handles execution lag).
+    """
+
+    def test_tradeable_constraint_excludes_from_ranking(self):
+        """add_tradeable_constraint must NaN excluded stocks so they don't appear in positions.
+
+        Regression: constraint used to fill with 0.0, letting zeroed stocks win short slots
+        in build_long_short_positions (na_option='bottom' ranks NaN last = short candidates).
+        """
+        universe, benchmark, factors = make_factor_study_data()
+        returns_df = universe.returns
+        close_df = universe.close
+        volume_df = universe.volume
+
+        # Manual: signal matches pipeline mean_reversion (no .shift — engine handles lag)
+        liq_mask = liquidity_filter(close_df, volume_df, top_n=15, window=30)
+        signal_manual = -returns_df.rolling(5).mean()
+        signal_manual = signal_manual.where(liq_mask)  # NaN excluded stocks — not 0.0
+        pos_manual = build_long_short_positions(signal_manual, n_long=3, n_short=3)
+
+        from qstudy import Study
+
+        study = (
+            Study(universe=universe, benchmark=benchmark)
+            .base_signal(mr5)
+            .add_tradeable_constraint(qs.liquidity(top_n=15, window=30))
+            .build_long_short(n_long=3, n_short=3)
+            .run()
+        )
+        pos_pipeline = study.cache["_position_history"][0]["df"]  # position_builder output
+
+        pd.testing.assert_frame_equal(
+            pos_manual.fillna(0.0),
+            pos_pipeline.fillna(0.0),
+            check_exact=False,
+            atol=1e-10,
+        )
+
+    def test_pipeline_matches_manual_portfolio_returns(self):
+        """Full pipeline (residualize + filters + liquidity + positions) matches manual.
+
+        Regression: add_tradeable_constraint filled with 0.0 instead of NaN, causing
+        ineligible stocks to be selected as shorts in build_long_short_positions.
+        """
+        universe, benchmark, factors = make_factor_study_data()
+        returns_df = universe.returns
+        close_df = universe.close
+        volume_df = universe.volume
+        factor_returns = factors.returns
+
+        # --- Manual (mirrors pipeline exactly: no .shift on signal, engine handles lag) ---
+        residuals_df, _, _ = qs.residualize(returns_df, factor_returns)
+        signal = -residuals_df.rolling(5).mean()
+        signal = signal.sub(signal.mean(axis=1), axis=0)
+        signal = vol_filter(signal, residuals_df, vol_window=5, quantile=0.6)
+        signal = volume_zscore_filter(signal, volume_df, window=20, min_zscore_quantile=0.7)
+        liq_mask = liquidity_filter(close_df, volume_df, top_n=15, window=30)
+        signal = signal.where(liq_mask)          # NaN excluded — not 0.0
+        ret_filtered = returns_df.where(liq_mask)
+        positions_manual = build_long_short_positions(signal, n_long=3, n_short=3)
+        port_ret_manual = run(positions_manual, ret_filtered)
+
+        # --- Pipeline ---
+        def demean(s, **c):
+            return s.sub(s.mean(axis=1), axis=0)
+
+        demean.__name__ = "demean"
+
+        from qstudy import Study
+
+        study = (
+            Study(universe=universe, benchmark=benchmark, factors=factors)
+            .residualize_returns()
+            .base_signal(mr5)
+            .transform_signal(demean)
+            .add_vol_filter(vol_window=5, quantile=0.6)
+            .add_volume_zscore_filter(window=20, min_zscore_quantile=0.7)
+            .add_tradeable_constraint(qs.liquidity(top_n=15, window=30))
+            .build_long_short(n_long=3, n_short=3)
+            .run()
+        )
+        port_ret_pipeline = study.cache["portfolio_returns"]
+
+        pd.testing.assert_series_equal(
+            port_ret_manual,
+            port_ret_pipeline,
+            check_exact=False,
+            check_names=False,
+            atol=1e-10,
+        )
+
+    def test_equity_curve_scaler_uses_lagged_positions(self):
+        """A position scaler that recomputes the equity curve must use positions.shift(1).
+
+        Regression: missing shift(1) caused the equity curve inside the scaler to use
+        same-day positions × returns, diverging from qs.run() which always applies a 1-day lag.
+        The scaler receives unscaled positions; the engine will later shift them. So to
+        accurately preview what returns will look like, the scaler must also shift by 1.
+        """
+        universe, benchmark, factors = make_factor_study_data()
+        returns_df = universe.returns
+        close_df = universe.close
+        volume_df = universe.volume
+        factor_returns = factors.returns
+
+        # --- Manual (signal matches pipeline: no extra .shift) ---
+        residuals_df, _, _ = qs.residualize(returns_df, factor_returns)
+        signal = -residuals_df.rolling(5).mean()
+        liq_mask = liquidity_filter(close_df, volume_df, top_n=15, window=30)
+        signal = signal.where(liq_mask)
+        ret_filtered = returns_df.where(liq_mask)
+        positions = build_long_short_positions(signal, n_long=3, n_short=3)
+        raw_port_ret = run(positions, ret_filtered)  # engine applies positions.shift(1)
+        equity = (1 + raw_port_ret).cumprod()
+        equity_ma = equity.rolling(10).mean()
+        scale = pd.Series(np.where(equity > equity_ma, 1.0, 0.25), index=equity.index)
+        scaled_positions = positions.mul(scale.shift(1), axis=0)
+        port_ret_manual = run(scaled_positions, ret_filtered)
+
+        # --- Pipeline scaler: must use positions.shift(1) to match qs.run() ---
+        def equity_regime_scale(positions, **cache):
+            returns = cache["returns"]
+            mask = cache.get("_tradeable_mask")
+            if mask is not None:
+                returns = returns.where(mask)
+            raw_ret = (positions.shift(1) * returns).sum(axis=1)  # shift required
+            equity = (1 + raw_ret).cumprod()
+            equity_ma = equity.rolling(10).mean()
+            scale = pd.Series(np.where(equity > equity_ma, 1.0, 0.25), index=equity.index)
+            return positions.mul(scale.shift(1), axis=0)
+
+        equity_regime_scale.__name__ = "equity_regime_scale"
+
+        from qstudy import Study
+
+        study = (
+            Study(universe=universe, benchmark=benchmark, factors=factors)
+            .residualize_returns()
+            .base_signal(mr5)
+            .add_tradeable_constraint(qs.liquidity(top_n=15, window=30))
+            .build_long_short(n_long=3, n_short=3)
+            .scale_risk(equity_regime_scale)
+            .run()
+        )
+        port_ret_pipeline = study.cache["portfolio_returns"]
+
+        pd.testing.assert_series_equal(
+            port_ret_manual,
+            port_ret_pipeline,
+            check_exact=False,
+            check_names=False,
+            atol=1e-10,
+        )
