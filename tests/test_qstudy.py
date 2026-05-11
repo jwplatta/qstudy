@@ -8,6 +8,7 @@ import pandas as pd
 import pytest
 
 import qstudy as qs
+from qstudy.signals.filters import momentum_context_filter, vol_filter, volume_zscore_filter
 from qstudy.study.engine import run
 from qstudy.study.metrics import (
     annualized_return,
@@ -19,7 +20,6 @@ from qstudy.study.metrics import (
     turnover,
 )
 from qstudy.study.portfolio import build_long_short_positions, liquidity_filter, rebalance
-from qstudy.signals.filters import momentum_context_filter, vol_filter, volume_zscore_filter
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -649,7 +649,9 @@ def make_study_data(n_dates=150, n_tickers=20, seed=7):
 
 def mr5(**cache):
     """5-day mean-reversion signal used as a base_signal fn throughout tests."""
-    returns = cache["residual_returns"] if cache.get("residual_returns") is not None else cache["returns"]
+    returns = (
+        cache["residual_returns"] if cache.get("residual_returns") is not None else cache["returns"]
+    )
     return -returns.rolling(5).mean()
 
 
@@ -798,6 +800,30 @@ class TestStudyNewMethods:
         )
         assert s.cache["portfolio_returns"] is not None
 
+    def test_study_data_defaults_ohl_to_close(self):
+        from qstudy.data.loader import StudyData
+
+        universe, _ = make_study_data()
+        study_data = StudyData(
+            tickers=universe.tickers,
+            close=universe.close,
+            volume=universe.volume,
+            returns=universe.returns,
+            log_returns=universe.log_returns,
+        )
+        pd.testing.assert_frame_equal(study_data.open, study_data.close)
+        pd.testing.assert_frame_equal(study_data.high, study_data.close)
+        pd.testing.assert_frame_equal(study_data.low, study_data.close)
+
+    def test_study_cache_exposes_ohl_fields(self):
+        from qstudy import Study
+
+        universe, benchmark = make_study_data()
+        study = Study(universe=universe, benchmark=benchmark)
+        pd.testing.assert_frame_equal(study.cache["open"], universe.close)
+        pd.testing.assert_frame_equal(study.cache["high"], universe.close)
+        pd.testing.assert_frame_equal(study.cache["low"], universe.close)
+
 
 # ---------------------------------------------------------------------------
 # Pipeline vs manual equivalence
@@ -922,7 +948,7 @@ class TestStudyPipelineEquivalence:
         signal = vol_filter(signal, residuals_df, vol_window=5, quantile=0.6)
         signal = volume_zscore_filter(signal, volume_df, window=20, min_zscore_quantile=0.7)
         liq_mask = liquidity_filter(close_df, volume_df, top_n=15, window=30)
-        signal = signal.where(liq_mask)          # NaN excluded — not 0.0
+        signal = signal.where(liq_mask)  # NaN excluded — not 0.0
         ret_filtered = returns_df.where(liq_mask)
         positions_manual = build_long_short_positions(signal, n_long=3, n_short=3)
         port_ret_manual = run(positions_manual, ret_filtered)

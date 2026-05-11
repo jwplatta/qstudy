@@ -13,22 +13,25 @@ from qstudy.constants import SP500, SECTOR_ETFS
 
 ## Data
 
-Single API call returns a dict with `close`, `volume`, `returns`, `log_returns`, and the raw `data`.
+Single API call returns `StudyData` with `open`, `high`, `low`, `close`, `volume`, `returns`, and `log_returns`.
 
 ```python
 d = qs.download(SP500, start="2015-01-01", end="2023-12-31")
 
-close_df    = d["close"]       # (dates x tickers) adjusted close
-volume_df   = d["volume"]      # (dates x tickers) daily volume
-returns_df  = d["returns"]     # close.pct_change().fillna(0)
-log_ret_df  = d["log_returns"] # log(close / close.shift(1))
+open_df     = d.open           # (dates x tickers) adjusted open
+high_df     = d.high           # (dates x tickers) adjusted high
+low_df      = d.low            # (dates x tickers) adjusted low
+close_df    = d.close          # (dates x tickers) adjusted close
+volume_df   = d.volume         # (dates x tickers) daily volume
+returns_df  = d.returns        # close.pct_change().fillna(0)
+log_ret_df  = d.log_returns    # log(close / close.shift(1))
 ```
 
 For factor/benchmark tickers (used in `residualize`):
 
 ```python
 d_factors = qs.download(["SPY", "XLK"], start="2015-01-01", end="2023-12-31")
-factor_returns = d_factors["returns"]
+factor_returns = d_factors.returns
 ```
 
 ---
@@ -192,10 +195,10 @@ import qstudy as qs
 from qstudy.constants import SP500
 
 d = qs.download(SP500, start="2015-01-01", end="2023-12-31")
-close_df, volume_df, returns_df = d["close"], d["volume"], d["returns"]
+close_df, volume_df, returns_df = d.close, d.volume, d.returns
 
 d_f = qs.download(["SPY", "XLK"], start="2015-01-01", end="2023-12-31")
-residuals, _, _ = qs.residualize(returns_df, d_f["returns"])
+residuals, _, _ = qs.residualize(returns_df, d_f.returns)
 
 signal = -residuals.rolling(5).mean().shift(1)
 signal = signal.sub(signal.mean(axis=1), axis=0)        # cross-sectional demean

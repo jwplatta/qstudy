@@ -7,6 +7,7 @@ import warnings
 from collections.abc import Callable
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
@@ -26,7 +27,6 @@ from qstudy.study.portfolio import (
 from qstudy.study.portfolio import (
     build_long_short_positions,
     liquidity,
-    liquidity_filter,
     rebalance,
 )
 from qstudy.study.weighting import (
@@ -132,6 +132,9 @@ class Study:
             idx = idx.intersection(factors.returns.index)
 
         self._cache: dict = {
+            "open": universe.open.reindex(idx).copy(),
+            "high": universe.high.reindex(idx).copy(),
+            "low": universe.low.reindex(idx).copy(),
             "close": universe.close.reindex(idx).copy(),
             "volume": universe.volume.reindex(idx).copy(),
             "returns": universe.returns.reindex(idx).copy(),
@@ -311,15 +314,15 @@ class Study:
                 if not parts:
                     continue
 
-                X_t = pd.concat(parts, axis=1).reindex(s_t.index).fillna(0.0)
+                x_t = pd.concat(parts, axis=1).reindex(s_t.index).fillna(0.0)
                 # Orthogonal projection: s - X(X'X)^-1 X' s
                 try:
-                    XtX_inv = pd.DataFrame(
-                        np.linalg.pinv(X_t.values.T @ X_t.values),
-                        index=X_t.columns,
-                        columns=X_t.columns,
+                    xtx_inv = pd.DataFrame(
+                        np.linalg.pinv(x_t.values.T @ x_t.values),
+                        index=x_t.columns,
+                        columns=x_t.columns,
                     )
-                    proj = X_t.values @ XtX_inv.values @ X_t.values.T @ s_t.values
+                    proj = x_t.values @ xtx_inv.values @ x_t.values.T @ s_t.values
                     neutralized.loc[date, s_t.index] = s_t.values - proj
                 except np.linalg.LinAlgError:
                     pass
@@ -868,25 +871,29 @@ class Study:
         self._require_run("audit")
         rows = []
         for entry in self._cache["_signal_history"]:
-            rows.append({
-                "step": entry["step"],
-                "stage": "signal",
-                "eligible_tickers": entry["eligible_tickers"],
-                "total_notna": entry["total_notna"],
-                "nonzero_tickers": None,
-                "abs_sum_mean": None,
-                "net_sum_mean": None,
-            })
+            rows.append(
+                {
+                    "step": entry["step"],
+                    "stage": "signal",
+                    "eligible_tickers": entry["eligible_tickers"],
+                    "total_notna": entry["total_notna"],
+                    "nonzero_tickers": None,
+                    "abs_sum_mean": None,
+                    "net_sum_mean": None,
+                }
+            )
         for entry in self._cache["_position_history"]:
-            rows.append({
-                "step": entry["step"],
-                "stage": "position",
-                "eligible_tickers": None,
-                "total_notna": None,
-                "nonzero_tickers": entry["nonzero_tickers"],
-                "abs_sum_mean": round(entry["abs_sum_mean"], 4),
-                "net_sum_mean": round(entry["net_sum_mean"], 4),
-            })
+            rows.append(
+                {
+                    "step": entry["step"],
+                    "stage": "position",
+                    "eligible_tickers": None,
+                    "total_notna": None,
+                    "nonzero_tickers": entry["nonzero_tickers"],
+                    "abs_sum_mean": round(entry["abs_sum_mean"], 4),
+                    "net_sum_mean": round(entry["net_sum_mean"], 4),
+                }
+            )
         return pd.DataFrame(rows)
 
     def metrics_dict(self) -> dict:
@@ -995,9 +1002,7 @@ class Study:
     def _validate_pipeline(self) -> None:
         types = [s[0] for s in self._steps]
         if "base_signal" not in types:
-            raise RuntimeError(
-                "No signal source defined. Call .base_signal(fn) before .run()."
-            )
+            raise RuntimeError("No signal source defined. Call .base_signal(fn) before .run().")
         if "position_builder" not in types:
             raise RuntimeError(
                 "No position builder defined. Call .build_long_short() or "
@@ -1092,17 +1097,13 @@ class Study:
             assert sig.shape == expected_shape, (
                 f"{fn.__name__} returned shape {sig.shape}, expected {expected_shape}"
             )
-            assert sig.index.equals(returns_index), (
-                f"{fn.__name__} returned misaligned index"
-            )
+            assert sig.index.equals(returns_index), f"{fn.__name__} returned misaligned index"
             self._cache["signal"] = sig
             self._cache["_signal_history"].append(self._signal_entry(fn.__name__, sig))
 
         elif step_type == "position_builder":
             pos = fn(self._cache["signal"])
-            assert pos.index.equals(returns_index), (
-                "position_builder returned misaligned index"
-            )
+            assert pos.index.equals(returns_index), "position_builder returned misaligned index"
             self._cache["positions"] = pos
             self._cache["_unscaled_positions"] = pos.copy()
             self._cache["_position_history"].append(self._position_entry("position_builder", pos))
