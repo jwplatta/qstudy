@@ -13,7 +13,7 @@ from tqdm import tqdm
 import qstudy.study.engine as engine
 import qstudy.study.metrics as metrics
 from qstudy.data.loader import StudyData
-from qstudy.signals.factors import residualize
+from qstudy.signals.factors import BarraLiteFactorModel, residualize
 from qstudy.signals.filters import (
     momentum_context_filter,
     vix_contango_filter,
@@ -25,6 +25,7 @@ from qstudy.study.portfolio import (
 )
 from qstudy.study.portfolio import (
     build_long_short_positions,
+    liquidity,
     liquidity_filter,
     rebalance,
 )
@@ -45,9 +46,13 @@ class Study:
         benchmark_data = qs.download(["SPY"], "2018-01-01", "2024-12-31")
         factors_data = qs.download(["SPY", "QQQ"], "2018-01-01", "2024-12-31")
 
+        def my_signal(**cache):
+            return -cache["residual_returns"].rolling(20).mean().shift(1)
+
         study = (
             Study(universe=universe_data, benchmark=benchmark_data, factors=factors_data)
-            .mean_reversion(window=20)
+            .residualize_returns()
+            .base_signal(my_signal)
             .add_liquidity_filter(top_n=300)
             .build_long_short(n_long=25, n_short=25)
             .run()
@@ -114,8 +119,12 @@ class Study:
         self._steps: list[tuple[str, Callable]] = []
         self._residualize: bool = False
         self._weighting_fn: Callable | None = None
+        self._factor_model: BarraLiteFactorModel | None = None
+        self._tradeable_constraint_fns: list[Callable] = []
 
-        # Align all indexes to the universe date range
+        # Canonical alignment: all input DataFrames are reindexed to the intersection
+        # of universe, benchmark, and factor date ranges exactly once here.
+        # No downstream code should reindex these core DataFrames.
         idx = universe.returns.index
         if benchmark is not None:
             idx = idx.intersection(benchmark.returns.index)
@@ -123,10 +132,10 @@ class Study:
             idx = idx.intersection(factors.returns.index)
 
         self._cache: dict = {
-            "close": universe.close.reindex(idx),
-            "volume": universe.volume.reindex(idx),
-            "returns": universe.returns.reindex(idx),
-            "log_returns": universe.log_returns.reindex(idx),
+            "close": universe.close.reindex(idx).copy(),
+            "volume": universe.volume.reindex(idx).copy(),
+            "returns": universe.returns.reindex(idx).copy(),
+            "log_returns": universe.log_returns.reindex(idx).copy(),
             "benchmark": None,
             "factor_returns": None,
             "residual_returns": None,
@@ -139,51 +148,22 @@ class Study:
             "_signal_history": [],
             "_position_history": [],
             "_liquidity_mask": None,
+            "_tradeable_mask": None,
+            "factor_exposures": None,
+            "factor_model": None,
+            "_xs_daily_r2": None,
         }
 
         if benchmark is not None:
             bm_returns = benchmark.returns.reindex(idx)
-            if bm_returns.shape[1] == 1:
-                self._cache["benchmark"] = bm_returns.iloc[:, 0]
-            else:
-                self._cache["benchmark"] = bm_returns.iloc[:, 0]
+            self._cache["benchmark"] = bm_returns.iloc[:, 0].copy()
 
         if factors is not None:
-            self._cache["factor_returns"] = factors.returns.reindex(idx)
+            self._cache["factor_returns"] = factors.returns.reindex(idx).copy()
 
     # ------------------------------------------------------------------
     # Signal source methods (exactly one required)
     # ------------------------------------------------------------------
-
-    def mean_reversion(self, window: int = 20) -> Study:
-        """Use short-term mean reversion as the base signal.
-
-        Signal = -rolling_mean(returns, window). Recent losers get positive signal.
-
-        Args:
-            window: Lookback in trading days.
-        """
-
-        def fn(**cache):
-            return -cache["_active_returns"].rolling(window).mean()
-
-        self._set_base_signal(fn, label=f"mean_reversion(window={window})")
-        return self
-
-    def momentum(self, window: int = 60) -> Study:
-        """Use cross-sectional momentum as the base signal.
-
-        Signal = rolling_mean(returns, window). Recent winners get positive signal.
-
-        Args:
-            window: Lookback in trading days.
-        """
-
-        def fn(**cache):
-            return cache["_active_returns"].rolling(window).mean()
-
-        self._set_base_signal(fn, label=f"momentum(window={window})")
-        return self
 
     def base_signal(self, fn: Callable) -> Study:
         """Use a custom function as the base signal.
@@ -216,8 +196,49 @@ class Study:
         self._residualize = True
         return self
 
+    def add_factor_model(
+        self,
+        model: str = "barra-lite",
+        factors: list[str] = ("market", "sector"),
+        sector_map: dict | None = None,
+        beta_window: int = 60,
+        momentum_window: int = 20,
+        vol_window: int = 20,
+    ) -> Study:
+        """Attach a cross-sectional factor model for residualization and neutralization.
+
+        The factor model is fitted at :meth:`run` time using data from the study cache.
+        When set, :meth:`residualize_returns` uses this model instead of the ETF time-series
+        OLS path. The fitted exposures are stored in ``cache["factor_exposures"]`` for use by
+        :meth:`neutralize_signal` and :meth:`neutralize_positions`.
+
+        Requires ``benchmark=`` to be set in the constructor (used as the market factor).
+
+        Args:
+            model:            Model type. Only ``"barra-lite"`` is supported.
+            factors:          Factor names to include. Supported: ``"market"``, ``"sector"``,
+                              ``"momentum"``, ``"volatility"``, ``"size"``.
+            sector_map:       Dict of ticker -> GICS sector string. Required when ``"sector"``
+                              is in ``factors``. Fetch with ``qs.get_sector_map(tickers)``.
+            beta_window:      Rolling window for market beta estimation (days).
+            momentum_window:  Window for momentum exposure.
+            vol_window:       Window for volatility exposure.
+        """
+        if self._cache["benchmark"] is None:
+            raise ValueError("add_factor_model() requires benchmark= to be set in the constructor.")
+        if model != "barra-lite":
+            raise ValueError(f"Unknown factor model '{model}'. Only 'barra-lite' is supported.")
+        self._factor_model = BarraLiteFactorModel(
+            factors=list(factors),
+            beta_window=beta_window,
+            momentum_window=momentum_window,
+            vol_window=vol_window,
+            sector_map=sector_map,
+        )
+        return self
+
     # ------------------------------------------------------------------
-    # Signal filters
+    # Signal filters, transforms, and neutralization
     # ------------------------------------------------------------------
 
     def add_filter(self, fn: Callable) -> Study:
@@ -231,25 +252,146 @@ class Study:
         self._append_signal_filter(fn, label=getattr(fn, "__name__", "custom_filter"))
         return self
 
-    def add_liquidity_filter(self, top_n: int = 250, window: int = 60) -> Study:
-        """Zero out signals for tickers outside the top_n most liquid assets.
+    def transform_signal(self, fn: Callable) -> Study:
+        """Apply a signal transformation that changes signal geometry.
 
-        Also stores the liquidity mask in the cache so that the engine uses
-        masked returns (matching the manual ``ret_filtered = returns.where(liq_mask)`` pattern).
+        Use this for operations that reshape all signal values but keep the same candidates:
+        cross-sectional demeaning, z-scoring, clipping, orthogonalization, etc.
+
+        Args:
+            fn: ``fn(signal, **cache) -> pd.DataFrame``. Same shape, different geometry.
+        """
+        self._append_signal_filter(fn, label=getattr(fn, "__name__", "transform_signal"))
+        return self
+
+    def filter_signal(self, fn: Callable) -> Study:
+        """Apply a signal filter that removes candidates by zeroing their signals.
+
+        Use this for quality or timing gates: realized vol threshold, volume z-score,
+        momentum context, etc. The distinction from :meth:`transform_signal` is semantic:
+        filters zero out some candidates; transforms reshape all values.
+
+        Args:
+            fn: ``fn(signal, **cache) -> pd.DataFrame``. Same shape, some values zeroed.
+        """
+        self._append_signal_filter(fn, label=getattr(fn, "__name__", "filter_signal"))
+        return self
+
+    def neutralize_signal(self, factors: list[str] = ("market", "sector")) -> Study:
+        """Orthogonalize the signal against factor exposures cross-sectionally.
+
+        Each day, projects the signal onto the null space of the factor exposure matrix,
+        removing systematic factor tilts from the signal. Useful when you want raw returns
+        (no residualization) but a factor-neutral signal.
+
+        Requires :meth:`add_factor_model` to have been called.
+
+        Args:
+            factors: Factor names to neutralize against. Must be a subset of the factors
+                     passed to :meth:`add_factor_model`.
+        """
+        factors = list(factors)
+
+        def fn(signal, **cache):
+            factor_exposures = cache.get("factor_exposures")
+            if factor_exposures is None:
+                return signal
+
+            neutralized = signal.copy()
+            for date in signal.index:
+                s_t = signal.loc[date].dropna()
+                if s_t.empty:
+                    continue
+
+                # Build exposure matrix for requested factors on this date
+                parts = []
+                for fname in factors:
+                    if fname in factor_exposures:
+                        parts.append(factor_exposures[fname].loc[date, s_t.index].rename(fname))
+                if not parts:
+                    continue
+
+                X_t = pd.concat(parts, axis=1).reindex(s_t.index).fillna(0.0)
+                # Orthogonal projection: s - X(X'X)^-1 X' s
+                try:
+                    XtX_inv = pd.DataFrame(
+                        np.linalg.pinv(X_t.values.T @ X_t.values),
+                        index=X_t.columns,
+                        columns=X_t.columns,
+                    )
+                    proj = X_t.values @ XtX_inv.values @ X_t.values.T @ s_t.values
+                    neutralized.loc[date, s_t.index] = s_t.values - proj
+                except np.linalg.LinAlgError:
+                    pass
+
+            return neutralized
+
+        fn.__name__ = f"neutralize_signal({factors})"
+        self._append_signal_filter(fn, label=fn.__name__)
+        return self
+
+    def add_tradeable_constraint(self, fn: Callable) -> Study:
+        """Add a tradeable universe constraint.
+
+        Tradeable constraints define which assets are eligible on each date. They are
+        applied *after* all signal processing (transforms, filters, neutralization) and
+        *before* position building. Ineligible assets have their signals zeroed out and
+        their returns masked in the backtest engine.
+
+        This is semantically distinct from signal filters (quality preferences on eligible
+        assets) and signal transforms (geometry changes).
+
+        Multiple constraints are ANDed together into ``cache["_tradeable_mask"]``.
+
+        Built-in constraint factories in ``qstudy``:
+            ``qs.liquidity(top_n=250, window=60)``  — top N by rolling dollar volume
+            ``qs.min_price(threshold=5.0)``          — minimum close price
+            ``qs.min_adv(threshold=1e6)``            — minimum average daily dollar volume
+
+        Args:
+            fn: ``fn(close, volume, returns, **cache) -> pd.DataFrame[bool]``.
+        """
+        self._tradeable_constraint_fns.append(fn)
+
+        # Wrap as a signal_filter step so it runs exactly where declared in the chain,
+        # before position_builder. Also stores the mask in cache["_tradeable_mask"] so
+        # position scalers (e.g. equity_curve_regime_scale) can apply it to returns.
+        constraint_fn = fn
+
+        def apply_constraint(signal, **cache):
+            m = constraint_fn(
+                close=cache["close"],
+                volume=cache["volume"],
+                **{k: v for k, v in cache.items() if k not in ("close", "volume")},
+            )
+            m = m.reindex(columns=signal.columns).fillna(False)
+            existing = cache.get("_tradeable_mask")
+            combined = (existing & m) if existing is not None else m
+            self._cache["_tradeable_mask"] = combined
+            return signal.where(combined, other=float("nan"))
+
+        apply_constraint.__name__ = getattr(fn, "__name__", "tradeable_constraint")
+        self._append_signal_filter(apply_constraint, label=apply_constraint.__name__)
+        return self
+
+    def add_liquidity_filter(self, top_n: int = 250, window: int = 60) -> Study:
+        """Deprecated alias for ``.add_tradeable_constraint(qs.liquidity(top_n, window))``.
+
+        Prefer :meth:`add_tradeable_constraint` with the :func:`~qstudy.study.portfolio.liquidity`
+        factory. Unlike the old implementation (which ran before position building as a signal
+        filter), tradeable constraints now run after all signal processing.
 
         Args:
             top_n:  Keep only the top N assets by rolling dollar volume.
             window: Lookback for rolling average dollar volume.
         """
-
-        def fn(signal, **cache):
-            mask = liquidity_filter(cache["close"], cache["volume"], top_n=top_n, window=window)
-            # Store the mask so run() can apply it to returns before the engine
-            self._cache["_liquidity_mask"] = mask
-            return signal.where(mask.reindex(columns=signal.columns))
-
-        self._append_signal_filter(fn, label=f"liquidity_filter(top_n={top_n})")
-        return self
+        warnings.warn(
+            "add_liquidity_filter() is deprecated. "
+            "Use .add_tradeable_constraint(qs.liquidity(top_n, window)) instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.add_tradeable_constraint(liquidity(top_n=top_n, window=window))
 
     def add_vol_filter(
         self,
@@ -353,36 +495,45 @@ class Study:
         self,
         n_long: int = 25,
         n_short: int = 25,
-        rebalance_every: int = 1,
     ) -> Study:
         """Build a dollar-neutral long/short portfolio.
 
         Args:
-            n_long:          Number of long positions.
-            n_short:         Number of short positions.
-            rebalance_every: Rebalance every N trading days (1 = daily).
+            n_long:  Number of long positions.
+            n_short: Number of short positions.
         """
 
         def fn(signal):
-            pos = build_long_short_positions(signal, n_long=n_long, n_short=n_short)
-            return rebalance(pos, every=rebalance_every)
+            return build_long_short_positions(signal, n_long=n_long, n_short=n_short)
 
         self._set_position_builder(
             fn, label=f"build_long_short(n_long={n_long}, n_short={n_short})"
         )
         return self
 
-    def build_long_only(self, n: int = 10, rebalance_every: int = 1) -> Study:
+    def build_positions(self, fn: Callable) -> Study:
+        """Build positions using a custom function.
+
+        Use this when the built-in long/short or long-only builders don't fit your needs,
+        e.g. proportional signal weighting, volatility-scaled weights, or custom bucketing.
+
+        Args:
+            fn: ``fn(signal) -> pd.DataFrame`` — takes the fully filtered signal DataFrame
+                (dates x tickers, NaN = ineligible) and returns a positions DataFrame of the
+                same shape. Weights should sum to a consistent scale (e.g. abs sum = 1.0).
+        """
+        self._set_position_builder(fn, label=getattr(fn, "__name__", "custom_positions"))
+        return self
+
+    def build_long_only(self, n: int = 10) -> Study:
         """Build a long-only equal-weighted portfolio.
 
         Args:
-            n:               Number of long positions.
-            rebalance_every: Rebalance every N trading days (1 = daily).
+            n: Number of long positions.
         """
 
         def fn(signal):
-            pos = _build_long_only(signal, n=n)
-            return rebalance(pos, every=rebalance_every)
+            return _build_long_only(signal, n=n)
 
         self._set_position_builder(fn, label=f"build_long_only(n={n})")
         return self
@@ -391,16 +542,145 @@ class Study:
     # Position processing
     # ------------------------------------------------------------------
 
-    def scale_returns(self, fn: Callable) -> Study:
-        """Add a custom position scaler.
+    def rebalance(self, every: int = 5) -> Study:
+        """Forward-fill positions on a fixed rebalance schedule.
+
+        Positions are only updated on rebalance dates (every N trading days);
+        in between, yesterday's weights are carried forward unchanged.
 
         Args:
-            fn: ``fn(positions, **cache) -> pd.DataFrame``. Receives the current positions
-                DataFrame and a shallow copy of the cache. Must return a positions DataFrame
-                of the same shape.
+            every: Rebalance every N trading days (1 = daily, 5 = weekly, 21 = monthly).
         """
+
+        def fn(positions, **cache):
+            return rebalance(positions, every=every)
+
+        fn.__name__ = f"rebalance(every={every})"
         self._steps.append(("position_scaler", fn))
         return self
+
+    def neutralize_positions(
+        self,
+        constraints: dict[str, float | tuple[float, float]],
+    ) -> Study:
+        """Enforce portfolio-level factor exposure constraints after position building.
+
+        For each date, adjusts active positions so that the weighted sum of each factor
+        exposure meets the specified constraint target. This prevents ranking/rebalancing
+        from reintroducing factor bets even when the signal is already factor-neutral.
+
+        Requires :meth:`add_factor_model` to have been called.
+
+        Args:
+            constraints: Dict of factor name -> target or tolerance band.
+                         Examples:
+                           ``{"beta": 0}``             — zero net beta exposure
+                           ``{"sector": 0}``           — zero net sector exposure
+                           ``{"momentum": (-0.05, 0.05)}`` — tolerance band
+        """
+        targets = {}
+        for fname, val in constraints.items():
+            if isinstance(val, (int, float)):
+                targets[fname] = (float(val), float(val))
+            else:
+                targets[fname] = (float(val[0]), float(val[1]))
+
+        def scaler(positions, **cache):
+            factor_exposures = cache.get("factor_exposures")
+            if factor_exposures is None:
+                return positions
+
+            adjusted = positions.copy()
+            for date in positions.index:
+                active = positions.loc[date]
+                active = active[active != 0.0]
+                if active.empty:
+                    continue
+
+                w = active.copy()
+                for fname, (lo, hi) in targets.items():
+                    if fname not in factor_exposures:
+                        continue
+                    exp = factor_exposures[fname].loc[date, active.index].dropna()
+                    if exp.empty:
+                        continue
+                    w_valid = w.reindex(exp.index).fillna(0.0)
+                    net_exp = float((w_valid * exp).sum())
+
+                    # Only adjust if outside the tolerance band
+                    target_val = (lo + hi) / 2.0
+                    if lo <= net_exp <= hi:
+                        continue
+
+                    # Neutralize by subtracting the projection onto the exposure vector
+                    exp_norm = float((exp**2).sum())
+                    if exp_norm == 0.0:
+                        continue
+                    adj = (net_exp - target_val) / exp_norm
+                    w_valid = w_valid - adj * exp
+                    w = w.copy()
+                    w.loc[exp.index] = w_valid.values
+
+                # Renormalize to preserve dollar-neutrality
+                gross = w.abs().sum()
+                if gross > 0:
+                    w = w / gross
+                adjusted.loc[date, w.index] = w.values
+
+            return adjusted.fillna(0.0)
+
+        scaler.__name__ = f"neutralize_positions({list(constraints.keys())})"
+        self._steps.append(("position_scaler", scaler))
+        return self
+
+    def scale_risk(self, fn: Callable | None = None, vol_target: float | None = None) -> Study:
+        """Scale position size for risk or exposure control.
+
+        Either pass a custom scaler function (same contract as the old ``scale_returns()``)
+        or specify a ``vol_target`` to automatically scale positions to a target annualized
+        portfolio volatility.
+
+        Args:
+            fn:         ``fn(positions, **cache) -> pd.DataFrame``. Receives the current
+                        positions and a shallow copy of the cache. Mutually exclusive with
+                        ``vol_target``.
+            vol_target: Target annualized portfolio volatility (e.g. ``0.10`` for 10%).
+                        Uses a 63-day rolling estimate of realized vol to scale.
+        """
+        if fn is not None and vol_target is not None:
+            raise ValueError("Provide either fn or vol_target, not both.")
+        if fn is None and vol_target is None:
+            raise ValueError("Provide either fn or vol_target.")
+
+        if fn is not None:
+            self._steps.append(("position_scaler", fn))
+            return self
+
+        # vol_target path
+        target = float(vol_target)
+
+        def vol_scaler(positions, **cache):
+            port_ret = (positions.shift(1) * cache["returns"]).sum(axis=1)
+            realized_vol = port_ret.rolling(63).std() * (252**0.5)
+            scale = (target / realized_vol.replace(0.0, float("nan"))).clip(upper=2.0).shift(1)
+            return positions.mul(scale.fillna(1.0), axis=0)
+
+        vol_scaler.__name__ = f"scale_risk(vol_target={vol_target})"
+        self._steps.append(("position_scaler", vol_scaler))
+        return self
+
+    def scale_returns(self, fn: Callable) -> Study:
+        """Deprecated alias for :meth:`scale_risk`.
+
+        Args:
+            fn: ``fn(positions, **cache) -> pd.DataFrame``.
+        """
+        warnings.warn(
+            "scale_returns() is deprecated. Use .scale_risk(fn) instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.scale_risk(fn=fn)
 
     # ------------------------------------------------------------------
     # Weighting schemes
@@ -470,6 +750,18 @@ class Study:
 
         stages = self._build_stage_list()
         with tqdm(total=len(stages), desc=self._name or "Study.run") as pbar:
+            # Stage: fit factor model (optional, must run before residualize)
+            if self._factor_model is not None:
+                pbar.set_postfix({"stage": "factor_model"})
+                self._factor_model.fit(
+                    returns=self._cache["returns"],
+                    benchmark_returns=self._cache["benchmark"],
+                    close=self._cache["close"],
+                )
+                self._cache["factor_model"] = self._factor_model
+                self._cache["factor_exposures"] = self._factor_model.factor_exposures_
+                pbar.update(1)
+
             # Stage: residualize (optional)
             if self._residualize:
                 pbar.set_postfix({"stage": "residualize"})
@@ -485,7 +777,7 @@ class Study:
             )
             pbar.update(1)
 
-            # Pipeline steps
+            # Pipeline steps — signal generation, transforms, filters, position building, scalers
             for step_type, fn in self._steps:
                 pbar.set_postfix({"stage": step_type})
                 self._execute_step(step_type, fn)
@@ -497,16 +789,18 @@ class Study:
                 cache_kw = {k: v for k, v in self._cache.items() if k != "positions"}
                 self._cache["positions"] = self._weighting_fn(self._cache["positions"], **cache_kw)
                 self._cache["_position_history"].append(
-                    ("weighting", self._cache["positions"].copy())
+                    self._position_entry("weighting", self._cache["positions"])
                 )
                 pbar.update(1)
 
             # Backtest engine
             pbar.set_postfix({"stage": "backtest"})
             returns_for_engine = self._cache["returns"]
-            liq_mask = self._cache.get("_liquidity_mask")
-            if liq_mask is not None:
-                returns_for_engine = returns_for_engine.where(liq_mask)
+            tradeable_mask = self._cache.get("_tradeable_mask")
+            liq_mask = self._cache.get("_liquidity_mask")  # legacy compat
+            combined_mask = tradeable_mask if tradeable_mask is not None else liq_mask
+            if combined_mask is not None:
+                returns_for_engine = returns_for_engine.where(combined_mask)
             self._cache["portfolio_returns"] = engine.run(
                 self._cache["positions"], returns_for_engine
             )
@@ -516,7 +810,7 @@ class Study:
             pbar.set_postfix({"stage": "metrics"})
             self._cache["metrics_summary"] = metrics.summary(
                 self._cache["portfolio_returns"],
-                positions=self._cache["positions"],
+                positions=self._cache.get("_unscaled_positions", self._cache["positions"]),
                 benchmark=self._cache["benchmark"],
             )
             pbar.update(1)
@@ -550,6 +844,50 @@ class Study:
     def cache(self) -> dict:
         """The study cache containing all intermediate and final DataFrames."""
         return self._cache
+
+    def audit(self) -> pd.DataFrame:
+        """Return a summary table of all pipeline steps and their intermediate state.
+
+        Each row is one pipeline step in execution order. Call after :meth:`run` to
+        inspect how candidates and positions changed at each stage — useful for
+        comparing against a manual implementation or diagnosing unexpected behavior.
+
+        Signal rows show how the eligible candidate set shrinks through filters.
+        Position rows show whether weights stay dollar-neutral through scalers.
+
+        Returns:
+            DataFrame with columns:
+                ``step``              — step name
+                ``stage``             — ``"signal"`` or ``"position"``
+                ``eligible_tickers``  — (signal) tickers with any non-NaN value
+                ``total_notna``       — (signal) total non-NaN cell count
+                ``nonzero_tickers``   — (position) tickers with any nonzero weight
+                ``abs_sum_mean``      — (position) mean of abs(w).sum(axis=1), target ~1.0
+                ``net_sum_mean``      — (position) mean of w.sum(axis=1), target ~0 for L/S
+        """
+        self._require_run("audit")
+        rows = []
+        for entry in self._cache["_signal_history"]:
+            rows.append({
+                "step": entry["step"],
+                "stage": "signal",
+                "eligible_tickers": entry["eligible_tickers"],
+                "total_notna": entry["total_notna"],
+                "nonzero_tickers": None,
+                "abs_sum_mean": None,
+                "net_sum_mean": None,
+            })
+        for entry in self._cache["_position_history"]:
+            rows.append({
+                "step": entry["step"],
+                "stage": "position",
+                "eligible_tickers": None,
+                "total_notna": None,
+                "nonzero_tickers": entry["nonzero_tickers"],
+                "abs_sum_mean": round(entry["abs_sum_mean"], 4),
+                "net_sum_mean": round(entry["net_sum_mean"], 4),
+            })
+        return pd.DataFrame(rows)
 
     def metrics_dict(self) -> dict:
         """Return the metrics summary as a plain dictionary.
@@ -617,6 +955,8 @@ class Study:
         obj._steps = []
         obj._residualize = False
         obj._weighting_fn = None
+        obj._factor_model = None
+        obj._tradeable_constraint_fns = []
         obj._cache = cache
         return obj
 
@@ -656,8 +996,7 @@ class Study:
         types = [s[0] for s in self._steps]
         if "base_signal" not in types:
             raise RuntimeError(
-                "No signal source defined. Call .mean_reversion(), .momentum(), "
-                "or .base_signal(fn) before .run()."
+                "No signal source defined. Call .base_signal(fn) before .run()."
             )
         if "position_builder" not in types:
             raise RuntimeError(
@@ -676,6 +1015,8 @@ class Study:
 
     def _build_stage_list(self) -> list[str]:
         stages: list[str] = []
+        if self._factor_model is not None:
+            stages.append("factor_model")
         if self._residualize:
             stages.append("residualize")
         stages.append("setup")
@@ -689,6 +1030,14 @@ class Study:
 
     def _run_residualize(self) -> None:
         returns = self._cache["returns"]
+        # Use factor model (cross-sectional) if available
+        if self._factor_model is not None and self._cache.get("factor_model") is not None:
+            print("Using barra-lite factor model for residuals...")
+            residuals, daily_r2 = self._factor_model.residualize(returns)
+            self._cache["residual_returns"] = residuals
+            self._cache["_xs_daily_r2"] = daily_r2
+            return
+        # Fall back to ETF time-series OLS
         if self._cache["factor_returns"] is not None:
             print("Using factors for residuals...")
             factor_returns = self._cache["factor_returns"]
@@ -702,33 +1051,68 @@ class Study:
         residuals, _, _ = residualize(returns, factor_returns)
         self._cache["residual_returns"] = residuals
 
+    @staticmethod
+    def _signal_entry(step: str, df: pd.DataFrame) -> dict:
+        sig_copy = df.copy()
+        return {
+            "step": step,
+            "df": sig_copy,
+            "eligible_tickers": int(sig_copy.notna().any(axis=0).sum()),
+            "total_notna": int(sig_copy.notna().sum().sum()),
+        }
+
+    @staticmethod
+    def _position_entry(step: str, df: pd.DataFrame) -> dict:
+        pos_copy = df.copy()
+        abs_sum = pos_copy.abs().sum(axis=1)
+        net_sum = pos_copy.sum(axis=1)
+        return {
+            "step": step,
+            "df": pos_copy,
+            "nonzero_tickers": int((pos_copy != 0).any(axis=0).sum()),
+            "abs_sum_mean": float(abs_sum[abs_sum > 0].mean()) if (abs_sum > 0).any() else 0.0,
+            "net_sum_mean": float(net_sum[abs_sum > 0].mean()) if (abs_sum > 0).any() else 0.0,
+        }
+
     def _execute_step(self, step_type: str, fn: Callable) -> None:
         snapshot = self._cache.copy()
+        returns_index = self._cache["returns"].index
+        expected_shape = self._cache["signal"].shape if self._cache["signal"] is not None else None
 
         if step_type == "base_signal":
             sig = fn(**snapshot)
             self._cache["base_signal"] = sig
             self._cache["signal"] = sig.copy()
-            self._cache["_signal_history"].append(("base_signal", sig.copy()))
+            self._cache["_signal_history"].append(self._signal_entry("base_signal", sig))
 
         elif step_type == "signal_filter":
             # Remove "signal" from snapshot to avoid collision with the positional arg
             cache_kw = {k: v for k, v in snapshot.items() if k != "signal"}
             sig = fn(self._cache["signal"], **cache_kw)
+            assert sig.shape == expected_shape, (
+                f"{fn.__name__} returned shape {sig.shape}, expected {expected_shape}"
+            )
+            assert sig.index.equals(returns_index), (
+                f"{fn.__name__} returned misaligned index"
+            )
             self._cache["signal"] = sig
-            self._cache["_signal_history"].append((fn.__name__, sig.copy()))
+            self._cache["_signal_history"].append(self._signal_entry(fn.__name__, sig))
 
         elif step_type == "position_builder":
             pos = fn(self._cache["signal"])
+            assert pos.index.equals(returns_index), (
+                "position_builder returned misaligned index"
+            )
             self._cache["positions"] = pos
-            self._cache["_position_history"].append(("position_builder", pos.copy()))
+            self._cache["_unscaled_positions"] = pos.copy()
+            self._cache["_position_history"].append(self._position_entry("position_builder", pos))
 
         elif step_type == "position_scaler":
             # Remove "positions" from snapshot to avoid collision with the positional arg
             cache_kw = {k: v for k, v in snapshot.items() if k != "positions"}
             pos = fn(self._cache["positions"], **cache_kw)
             self._cache["positions"] = pos
-            self._cache["_position_history"].append((fn.__name__, pos.copy()))
+            self._cache["_position_history"].append(self._position_entry(fn.__name__, pos))
 
     def _require_run(self, method: str) -> None:
         if self._cache.get("portfolio_returns") is None:
