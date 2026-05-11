@@ -29,34 +29,32 @@ class StudyData:
     """
 
     tickers: list[str]
+    open: pd.DataFrame
+    high: pd.DataFrame
+    low: pd.DataFrame
     close: pd.DataFrame
     volume: pd.DataFrame
     returns: pd.DataFrame
     log_returns: pd.DataFrame
-    open: pd.DataFrame | None = None
-    high: pd.DataFrame | None = None
-    low: pd.DataFrame | None = None
-
-    def __post_init__(self) -> None:
-        # Backward compatibility: older tests and callers only populate close/volume/returns.
-        if self.open is None:
-            self.open = self.close.copy()
-        if self.high is None:
-            self.high = self.close.copy()
-        if self.low is None:
-            self.low = self.close.copy()
+    interval: str = "1d"
 
 
-def download(tickers: list[str] | str, start: str, end: str) -> StudyData:
+def download(
+    tickers: list[str] | str,
+    start: str,
+    end: str,
+    interval: str = "1d",
+) -> StudyData:
     """Download OHLCV data in a single yfinance API call.
 
     Args:
         tickers: List of ticker symbols, or a single ticker string.
         start:   Start date string (ISO format, e.g. "2015-01-01").
         end:     End date string (ISO format, e.g. "2024-12-31").
+        interval: yfinance bar interval, e.g. ``"1d"``, ``"1h"``, ``"5m"``, ``"1m"``.
 
     Returns:
-        :class:`StudyData` with aligned close, volume, returns, and log_returns DataFrames.
+        :class:`StudyData` with aligned OHLCV, returns, and log_returns DataFrames.
         Tickers that fail to download are silently dropped.
     """
     # Normalize to list so we always know the ticker names
@@ -64,7 +62,13 @@ def download(tickers: list[str] | str, start: str, end: str) -> StudyData:
         tickers = [tickers]
 
     data = yf.download(
-        tickers, start=start, end=end, auto_adjust=True, progress=False, multi_level_index=False
+        tickers,
+        start=start,
+        end=end,
+        interval=interval,
+        auto_adjust=True,
+        progress=False,
+        multi_level_index=False,
     )
 
     def normalize_frame(field: str) -> pd.DataFrame:
@@ -73,12 +77,12 @@ def download(tickers: list[str] | str, start: str, end: str) -> StudyData:
             raw = raw.to_frame(name=tickers[0])
         return raw
 
-    close_raw = normalize_frame("Close")
+    close_raw = normalize_frame("Close").sort_index()
     close = close_raw.dropna(axis=1)
-    open_ = normalize_frame("Open")[close.columns]
-    high = normalize_frame("High")[close.columns]
-    low = normalize_frame("Low")[close.columns]
-    volume = normalize_frame("Volume")[close.columns]
+    open_ = normalize_frame("Open").reindex(close.index)[close.columns]
+    high = normalize_frame("High").reindex(close.index)[close.columns]
+    low = normalize_frame("Low").reindex(close.index)[close.columns]
+    volume = normalize_frame("Volume").reindex(close.index)[close.columns]
     returns = close.pct_change().fillna(0)
     log_returns = np.log(close / close.shift(1))
 
@@ -91,6 +95,7 @@ def download(tickers: list[str] | str, start: str, end: str) -> StudyData:
         volume=volume,
         returns=returns,
         log_returns=log_returns,
+        interval=interval,
     )
 
 
