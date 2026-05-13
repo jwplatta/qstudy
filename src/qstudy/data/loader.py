@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import pickle
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -8,6 +10,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import yfinance as yf
+
+from qstudy.experiments import load_studies_config
 
 
 @dataclass
@@ -44,6 +48,7 @@ def download(
     start: str,
     end: str,
     interval: str = "1d",
+    data_dir: str | Path | None = None,
 ) -> StudyData:
     """Download OHLCV data in a single yfinance API call.
 
@@ -52,6 +57,9 @@ def download(
         start:   Start date string (ISO format, e.g. "2015-01-01").
         end:     End date string (ISO format, e.g. "2024-12-31").
         interval: yfinance bar interval, e.g. ``"1d"``, ``"1h"``, ``"5m"``, ``"1m"``.
+        data_dir: Optional cache directory. If omitted, qstudy uses ``data_dir`` from
+                  ``.qstudy.toml`` when configured. Cached datasets are keyed by the
+                  normalized download request.
 
     Returns:
         :class:`StudyData` with aligned OHLCV, returns, and log_returns DataFrames.
@@ -61,32 +69,51 @@ def download(
     if isinstance(tickers, str):
         tickers = [tickers]
 
-    data = yf.download(
-        tickers,
-        start=start,
-        end=end,
-        interval=interval,
-        auto_adjust=True,
-        progress=False,
-        multi_level_index=False,
-    )
+    cache_dir = _resolve_data_dir(data_dir)
+    request = _build_download_request(tickers=tickers, start=start, end=end, interval=interval)
+    cache_paths = _cache_paths(cache_dir, request) if cache_dir is not None else None
+    if cache_paths is not None:
+        cached = _load_cached_study_data(cache_paths["data"])
+        if cached is not None:
+            return cached
 
-    def normalize_frame(field: str) -> pd.DataFrame:
-        raw = data[field]
-        if isinstance(raw, pd.Series):
-            raw = raw.to_frame(name=tickers[0])
-        return raw
+    chunk_size = 100
+    chunks = [tickers[i : i + chunk_size] for i in range(0, len(tickers), chunk_size)]
+    all_frames: dict[str, list[pd.DataFrame]] = {
+        "Close": [], "Open": [], "High": [], "Low": [], "Volume": []
+    }
 
-    close_raw = normalize_frame("Close").sort_index()
+    for chunk in chunks:
+        data = yf.download(
+            chunk,
+            start=start,
+            end=end,
+            interval=interval,
+            auto_adjust=True,
+            progress=False,
+            multi_level_index=False,
+        )
+        for field in all_frames:
+            raw = data[field]
+            if isinstance(raw, pd.Series):
+                raw = raw.to_frame(name=chunk[0])
+            if isinstance(raw.columns, pd.MultiIndex):
+                raw.columns = raw.columns.get_level_values(1)
+            all_frames[field].append(raw)
+
+    def combine(field: str) -> pd.DataFrame:
+        return pd.concat(all_frames[field], axis=1)
+
+    close_raw = combine("Close").sort_index()
     close = close_raw.dropna(axis=1)
-    open_ = normalize_frame("Open").reindex(close.index)[close.columns]
-    high = normalize_frame("High").reindex(close.index)[close.columns]
-    low = normalize_frame("Low").reindex(close.index)[close.columns]
-    volume = normalize_frame("Volume").reindex(close.index)[close.columns]
+    open_ = combine("Open").reindex(close.index)[close.columns]
+    high = combine("High").reindex(close.index)[close.columns]
+    low = combine("Low").reindex(close.index)[close.columns]
+    volume = combine("Volume").reindex(close.index)[close.columns]
     returns = close.pct_change().fillna(0)
     log_returns = np.log(close / close.shift(1))
 
-    return StudyData(
+    study_data = StudyData(
         tickers=close.columns.tolist(),
         open=open_,
         high=high,
@@ -97,6 +124,72 @@ def download(
         log_returns=log_returns,
         interval=interval,
     )
+    if cache_paths is not None:
+        _save_cached_study_data(cache_paths, request, study_data)
+    return study_data
+
+
+def _resolve_data_dir(data_dir: str | Path | None) -> Path | None:
+    if data_dir is not None:
+        return Path(data_dir).expanduser().resolve()
+
+    config = load_studies_config()
+    return config.data_root
+
+
+def _build_download_request(
+    tickers: list[str],
+    start: str,
+    end: str,
+    interval: str,
+) -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "provider": "yfinance",
+        "tickers": list(tickers),
+        "start": start,
+        "end": end,
+        "interval": interval,
+        "auto_adjust": True,
+        "progress": False,
+        "multi_level_index": False,
+    }
+
+
+def _cache_paths(
+    cache_root: Path,
+    request: dict[str, object],
+) -> dict[str, Path]:
+    request_json = json.dumps(request, sort_keys=True, separators=(",", ":"))
+    digest = hashlib.sha256(request_json.encode("utf-8")).hexdigest()
+    base_dir = cache_root / "yfinance"
+    return {
+        "dir": base_dir,
+        "data": base_dir / f"{digest}.pkl",
+        "meta": base_dir / f"{digest}.json",
+    }
+
+
+def _load_cached_study_data(cache_path: Path) -> StudyData | None:
+    if not cache_path.exists():
+        return None
+    try:
+        with cache_path.open("rb") as handle:
+            payload = pickle.load(handle)
+    except Exception:
+        return None
+    return payload if isinstance(payload, StudyData) else None
+
+
+def _save_cached_study_data(
+    cache_paths: dict[str, Path],
+    request: dict[str, object],
+    study_data: StudyData,
+) -> None:
+    cache_paths["dir"].mkdir(parents=True, exist_ok=True)
+    with cache_paths["data"].open("wb") as handle:
+        pickle.dump(study_data, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    cache_paths["meta"].write_text(json.dumps(request, indent=2), encoding="utf-8")
 
 
 def get_sector_map(

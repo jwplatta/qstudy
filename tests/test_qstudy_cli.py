@@ -29,11 +29,17 @@ from qstudy.experiments import (
 
 def test_load_studies_config_prefers_local_config(tmp_path: Path) -> None:
     local_root = tmp_path / "local-studies"
+    local_data = tmp_path / "local-data"
     home_root = tmp_path / "home-studies"
-    (tmp_path / CONFIG_FILENAME).write_text('studies_dir = "local-studies"\n', encoding="utf-8")
+    (tmp_path / CONFIG_FILENAME).write_text(
+        'studies_dir = "local-studies"\n'
+        'data_dir = "local-data"\n',
+        encoding="utf-8",
+    )
     (tmp_path / "home" / CONFIG_FILENAME).parent.mkdir()
     (tmp_path / "home" / CONFIG_FILENAME).write_text(
-        'studies_dir = "home-studies"\n',
+        'studies_dir = "home-studies"\n'
+        'data_dir = "home-data"\n',
         encoding="utf-8",
     )
 
@@ -41,6 +47,7 @@ def test_load_studies_config_prefers_local_config(tmp_path: Path) -> None:
 
     assert config.source == tmp_path / CONFIG_FILENAME
     assert config.studies_root == local_root.resolve()
+    assert config.data_root == local_data.resolve()
     assert config.studies_root != home_root.resolve()
 
 
@@ -55,6 +62,7 @@ def test_load_studies_config_uses_global_when_local_missing(tmp_path: Path) -> N
 
     assert config.source == home / CONFIG_FILENAME
     assert config.studies_root == (home / "experiments").resolve()
+    assert config.data_root is None
 
 
 def test_load_studies_config_falls_back_to_cwd(tmp_path: Path) -> None:
@@ -62,6 +70,7 @@ def test_load_studies_config_falls_back_to_cwd(tmp_path: Path) -> None:
 
     assert config.source is None
     assert config.studies_root == tmp_path.resolve()
+    assert config.data_root is None
 
 
 def test_create_generates_expected_scaffold_and_empty_results(tmp_path: Path) -> None:
@@ -92,6 +101,18 @@ def test_load_studies_config_rejects_invalid_config(tmp_path: Path) -> None:
     (tmp_path / CONFIG_FILENAME).write_text('bad_key = "studies"\n', encoding="utf-8")
 
     with pytest.raises(QStudyCliError, match="unsupported key"):
+        load_studies_config(cwd=tmp_path, home=tmp_path / "home")
+
+
+def test_load_studies_config_rejects_duplicate_data_dir(tmp_path: Path) -> None:
+    (tmp_path / CONFIG_FILENAME).write_text(
+        'studies_dir = "studies"\n'
+        'data_dir = "one"\n'
+        'data_dir = "two"\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(QStudyCliError, match="duplicate data_dir"):
         load_studies_config(cwd=tmp_path, home=tmp_path / "home")
 
 
