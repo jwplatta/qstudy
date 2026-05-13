@@ -13,6 +13,7 @@ from qstudy.experiments import (
     read_results_rows,
     render_experiment_list,
     render_results_table,
+    run_experiment,
 )
 
 
@@ -26,6 +27,13 @@ def build_parser() -> argparse.ArgumentParser:
     iterate_parser = subparsers.add_parser("iterate", help="Create the next study version file")
     iterate_parser.add_argument("study", help="Experiment name")
     iterate_parser.add_argument("version_name", help="Name for the new version suffix")
+
+    run_parser = subparsers.add_parser("run", help="Run study versions in an experiment")
+    run_parser.add_argument("name", help="Experiment name")
+    run_parser.add_argument(
+        "--version",
+        help="Run only a single study version by exact stem or filename",
+    )
 
     subparsers.add_parser("list", help="List experiments")
 
@@ -50,6 +58,12 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "iterate":
             version_file = iterate_experiment(config.studies_root, args.study, args.version_name)
             print(f"Created iteration at {version_file}")
+            return 0
+
+        if args.command == "run":
+            experiment_dir = config.studies_root / args.name
+            rows = run_experiment(experiment_dir, version=args.version)
+            print(f"Ran {len(rows)} study version(s).")
             return 0
 
         if args.command == "list":
