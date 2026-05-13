@@ -12,14 +12,18 @@ import pytest
 from qstudy.cli import main
 from qstudy.experiments import (
     CONFIG_FILENAME,
+    ITERATION_INDEX_FILENAME,
     QStudyCliError,
     create_experiment,
     discover_version_files,
+    iterate_experiment,
     list_experiments,
     load_studies_config,
+    read_iteration_index_rows,
     read_results_rows,
     render_results_table,
     run_experiment,
+    sanitize_version_name,
 )
 
 
@@ -64,6 +68,7 @@ def test_create_generates_expected_scaffold_and_empty_results(tmp_path: Path) ->
     experiment_dir = create_experiment(tmp_path, "alpha-study")
 
     expected = {
+        "iteration_index.json",
         "v0.py",
         "run.py",
         "shared.py",
@@ -74,6 +79,9 @@ def test_create_generates_expected_scaffold_and_empty_results(tmp_path: Path) ->
     }
     assert expected == {path.name for path in experiment_dir.iterdir()}
     assert json.loads((experiment_dir / "results.json").read_text(encoding="utf-8")) == []
+    assert json.loads((experiment_dir / ITERATION_INDEX_FILENAME).read_text(encoding="utf-8")) == [
+        {"version": 0, "file": "v0.py", "source_file": None, "label": None}
+    ]
 
     with (experiment_dir / "results.csv").open(newline="", encoding="utf-8") as handle:
         rows = list(csv.reader(handle))
@@ -180,6 +188,105 @@ def test_generated_run_py_executes_versions(tmp_path: Path) -> None:
     ]
 
 
+def test_sanitize_version_name_normalizes_common_inputs() -> None:
+    assert sanitize_version_name("Volume Confirmed") == "volume_confirmed"
+    assert sanitize_version_name("volume-confirmed.py") == "volume_confirmed"
+
+
+def test_iterate_creates_next_version_and_appends_index(tmp_path: Path) -> None:
+    experiment_dir = create_experiment(tmp_path, "alpha-study")
+    (experiment_dir / "v0.py").write_text(
+        '"""v0 - baseline."""\n'
+        'STUDY_NAME = "alpha_study_v0"\n'
+        "from qstudy import Study\n\n"
+        "study = Study(name=\"alpha-study:v0\")\n",
+        encoding="utf-8",
+    )
+
+    new_file = iterate_experiment(tmp_path, "alpha-study", "Volume Confirmed")
+
+    assert new_file.name == "v1_volume_confirmed.py"
+    text = new_file.read_text(encoding="utf-8")
+    assert '"""v1_volume_confirmed - baseline."""' in text
+    assert 'STUDY_NAME = "alpha_study_v1_volume_confirmed"' in text
+    assert 'Study(name="alpha-study:v1_volume_confirmed")' in text
+    assert read_iteration_index_rows(experiment_dir) == [
+        {"version": 0, "file": "v0.py", "source_file": None, "label": None},
+        {
+            "version": 1,
+            "file": "v1_volume_confirmed.py",
+            "source_file": "v0.py",
+            "label": "volume_confirmed",
+        },
+    ]
+
+
+def test_iterate_uses_highest_existing_version_and_lexicographic_tiebreak(tmp_path: Path) -> None:
+    experiment_dir = create_experiment(tmp_path, "alpha-study")
+    (experiment_dir / "v10_alpha.py").write_text("VALUE = 'alpha'\n", encoding="utf-8")
+    (experiment_dir / "v10_beta.py").write_text(
+        'STUDY_NAME = "alpha_beta_v10_beta"\n',
+        encoding="utf-8",
+    )
+
+    new_file = iterate_experiment(tmp_path, "alpha-study", "Next Step")
+
+    assert new_file.name == "v11_next_step.py"
+    assert new_file.read_text(encoding="utf-8") == 'STUDY_NAME = "alpha_beta_v11_next_step"\n'
+
+
+def test_iterate_bootstraps_missing_index_from_existing_versions(tmp_path: Path) -> None:
+    experiment_dir = create_experiment(tmp_path, "alpha-study")
+    (experiment_dir / ITERATION_INDEX_FILENAME).unlink()
+    (experiment_dir / "v1_growth.py").write_text("VALUE = 1\n", encoding="utf-8")
+
+    iterate_experiment(tmp_path, "alpha-study", "quality")
+
+    assert read_iteration_index_rows(experiment_dir) == [
+        {"version": 0, "file": "v0.py", "source_file": None, "label": None},
+        {"version": 1, "file": "v1_growth.py", "source_file": "v0.py", "label": "growth"},
+        {
+            "version": 2,
+            "file": "v2_quality.py",
+            "source_file": "v1_growth.py",
+            "label": "quality",
+        },
+    ]
+
+
+def test_iterate_rejects_invalid_name(tmp_path: Path) -> None:
+    create_experiment(tmp_path, "alpha-study")
+
+    with pytest.raises(QStudyCliError, match="Version name must include"):
+        iterate_experiment(tmp_path, "alpha-study", "!!!")
+
+
+def test_iterate_reports_malformed_index(tmp_path: Path) -> None:
+    experiment_dir = create_experiment(tmp_path, "alpha-study")
+    (experiment_dir / ITERATION_INDEX_FILENAME).write_text("{bad json", encoding="utf-8")
+
+    with pytest.raises(QStudyCliError, match="Malformed iteration index JSON"):
+        iterate_experiment(tmp_path, "alpha-study", "quality")
+
+
+def test_cli_iterate_creates_version_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+) -> None:
+    studies_root = tmp_path / "studies"
+    create_experiment(studies_root, "alpha")
+    (tmp_path / CONFIG_FILENAME).write_text('studies_dir = "studies"\n', encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    code = main(["iterate", "alpha", "quality tilt"])
+    out = capsys.readouterr()
+
+    assert code == 0
+    assert "Created iteration at" in out.out
+    assert (studies_root / "alpha" / "v1_quality_tilt.py").exists()
+
+
 def test_render_results_table_omits_missing_columns() -> None:
     table = render_results_table([{"version": "v0", "sharpe": 1.0}])
 
@@ -264,3 +371,18 @@ def test_run_experiment_reports_missing_run_study(tmp_path: Path) -> None:
 
     with pytest.raises(QStudyCliError, match="Missing run_study"):
         run_experiment(experiment_dir)
+
+
+def test_run_experiment_ignores_iteration_index_file(tmp_path: Path) -> None:
+    experiment_dir = create_experiment(tmp_path, "alpha-study")
+    (experiment_dir / "v0.py").write_text(
+        "def run_study():\n"
+        "    return {'sharpe': 1.0}\n",
+        encoding="utf-8",
+    )
+    (experiment_dir / ITERATION_INDEX_FILENAME).write_text(
+        json.dumps([{"version": 999, "file": "nope.py", "source_file": None, "label": "bad"}]),
+        encoding="utf-8",
+    )
+
+    assert run_experiment(experiment_dir) == [{"version": "v0", "sharpe": 1.0}]

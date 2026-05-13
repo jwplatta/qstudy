@@ -7,6 +7,7 @@ from qstudy.experiments import (
     ConfigError,
     QStudyCliError,
     create_experiment,
+    iterate_experiment,
     list_experiments,
     load_studies_config,
     read_results_rows,
@@ -21,6 +22,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     create_parser = subparsers.add_parser("create", help="Create a new experiment scaffold")
     create_parser.add_argument("name", help="Experiment name")
+
+    iterate_parser = subparsers.add_parser("iterate", help="Create the next study version file")
+    iterate_parser.add_argument("study", help="Experiment name")
+    iterate_parser.add_argument("version_name", help="Name for the new version suffix")
 
     subparsers.add_parser("list", help="List experiments")
 
@@ -40,6 +45,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "create":
             experiment_dir = create_experiment(config.studies_root, args.name)
             print(f"Created experiment at {experiment_dir}")
+            return 0
+
+        if args.command == "iterate":
+            version_file = iterate_experiment(config.studies_root, args.study, args.version_name)
+            print(f"Created iteration at {version_file}")
             return 0
 
         if args.command == "list":

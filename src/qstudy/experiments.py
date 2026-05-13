@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import re
+import shutil
 import sys
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -14,6 +15,7 @@ import pandas as pd
 CONFIG_FILENAME = ".qstudy.toml"
 RESULTS_FILENAME = "results.json"
 RESULTS_CSV_FILENAME = "results.csv"
+ITERATION_INDEX_FILENAME = "iteration_index.json"
 DEFAULT_RESULTS_COLUMNS = [
     "version",
     "sharpe",
@@ -25,6 +27,7 @@ DEFAULT_RESULTS_COLUMNS = [
 ]
 
 _STUDY_FILE_RE = re.compile(r"^v(\d+)(?:[^/]*)\.py$")
+_VERSION_STEM_RE = re.compile(r"^v(\d+)(?:_(.+))?$")
 
 
 class QStudyCliError(Exception):
@@ -142,10 +145,12 @@ def create_experiment(studies_root: Path, name: str) -> Path:
 
 def scaffold_files(name: str) -> dict[str, str]:
     title = name.replace("-", " ").replace("_", " ").title()
+    iteration_index = _build_iteration_index_rows(["v0.py"])
     return {
         "shared.py": _shared_template(),
         "v0.py": _v0_template(name),
         "run.py": _run_template(),
+        ITERATION_INDEX_FILENAME: f"{json.dumps(iteration_index, indent=2)}\n",
         RESULTS_FILENAME: "[]\n",
         RESULTS_CSV_FILENAME: "version\n",
         "log.md": f"# {title} Log\n\n- Created with `qstudy create {name}`.\n",
@@ -175,6 +180,45 @@ def discover_version_files(experiment_dir: Path) -> list[Path]:
             continue
         versions.append((int(match.group(1)), child.name, child))
     return [path for _, _, path in sorted(versions, key=lambda item: (item[0], item[1]))]
+
+
+def iterate_experiment(studies_root: Path, study: str, version_name: str) -> Path:
+    experiment_dir = studies_root / study
+    if not experiment_dir.exists():
+        raise QStudyCliError(f"Experiment not found: {experiment_dir}")
+
+    version_files = discover_version_files(experiment_dir)
+    if not version_files:
+        raise QStudyCliError(f"No version files found in {experiment_dir}")
+
+    index_rows = read_iteration_index_rows(experiment_dir)
+    source_file = version_files[-1]
+    source_version, _ = _parse_version_stem(source_file.stem)
+    suffix = sanitize_version_name(version_name)
+    next_version = source_version + 1
+    destination_name = f"v{next_version}_{suffix}.py"
+    destination_path = experiment_dir / destination_name
+    if destination_path.exists():
+        raise QStudyCliError(f"Iteration already exists: {destination_path}")
+
+    shutil.copyfile(source_file, destination_path)
+    new_text = _rewrite_iteration_text(
+        destination_path.read_text(encoding="utf-8"),
+        old_stem=source_file.stem,
+        new_stem=destination_path.stem,
+    )
+    destination_path.write_text(new_text, encoding="utf-8")
+
+    index_rows.append(
+        {
+            "version": next_version,
+            "file": destination_name,
+            "source_file": source_file.name,
+            "label": suffix,
+        }
+    )
+    write_iteration_index_rows(experiment_dir, index_rows)
+    return destination_path
 
 
 def run_experiment(experiment_dir: Path) -> list[dict[str, Any]]:
@@ -215,6 +259,33 @@ def write_results_artifacts(experiment_dir: Path, rows: list[dict[str, Any]]) ->
     if all_columns:
         frame = frame.reindex(columns=all_columns)
     frame.to_csv(csv_path, index=False)
+
+
+def read_iteration_index_rows(experiment_dir: Path) -> list[dict[str, Any]]:
+    index_path = experiment_dir / ITERATION_INDEX_FILENAME
+    if not index_path.exists():
+        version_filenames = [path.name for path in discover_version_files(experiment_dir)]
+        rows = _build_iteration_index_rows(version_filenames)
+        write_iteration_index_rows(experiment_dir, rows)
+        return rows
+
+    try:
+        payload = json.loads(index_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise QStudyCliError(f"Malformed iteration index JSON in {index_path}: {exc.msg}") from exc
+
+    if payload == []:
+        return []
+    if not isinstance(payload, list) or not all(isinstance(row, dict) for row in payload):
+        raise QStudyCliError(
+            f"Malformed iteration index JSON in {index_path}: expected a list of objects"
+        )
+    return [dict(row) for row in payload]
+
+
+def write_iteration_index_rows(experiment_dir: Path, rows: list[dict[str, Any]]) -> None:
+    index_path = experiment_dir / ITERATION_INDEX_FILENAME
+    index_path.write_text(f"{json.dumps(rows, indent=2)}\n", encoding="utf-8")
 
 
 def read_results_rows(experiment_dir: Path) -> list[dict[str, Any]]:
@@ -318,6 +389,90 @@ def _flatten_value(flattened: dict[str, Any], prefix: str, value: Any) -> None:
     flattened[prefix] = value
 
 
+def sanitize_version_name(version_name: str) -> str:
+    normalized = version_name.strip().lower()
+    if normalized.endswith(".py"):
+        normalized = normalized[:-3]
+    normalized = re.sub(r"[^a-z0-9]+", "_", normalized)
+    normalized = normalized.strip("_")
+    if not normalized:
+        raise QStudyCliError("Version name must include at least one letter or number.")
+    return normalized
+
+
+def _parse_version_stem(stem: str) -> tuple[int, str | None]:
+    match = _VERSION_STEM_RE.match(stem)
+    if match is None:
+        raise QStudyCliError(f"Invalid study version filename stem: {stem}")
+    return int(match.group(1)), match.group(2)
+
+
+def _build_iteration_index_rows(version_filenames: list[str]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    previous_file: str | None = None
+    for filename in version_filenames:
+        version, label = _parse_version_stem(Path(filename).stem)
+        rows.append(
+            {
+                "version": version,
+                "file": filename,
+                "source_file": previous_file,
+                "label": label,
+            }
+        )
+        previous_file = filename
+    return rows
+
+
+def _rewrite_iteration_text(text: str, old_stem: str, new_stem: str) -> str:
+    old_version, _ = _parse_version_stem(old_stem)
+    new_version, _ = _parse_version_stem(new_stem)
+    text = text.replace(old_stem, new_stem)
+    text = text.replace(old_stem.replace("_", "-"), new_stem.replace("_", "-"))
+    text = text.replace(f"v{old_version}", f"v{new_version}", 1)
+    text = re.sub(
+        r'^(STUDY_NAME\s*=\s*["\'])([^"\']*)(["\'])',
+        lambda m: f"{m.group(1)}{m.group(2).replace(f'v{old_version}', new_stem, 1)}{m.group(3)}",
+        text,
+        count=1,
+        flags=re.MULTILINE,
+    )
+    text = re.sub(
+        r'(\bname\s*=\s*["\'])([^"\']*)(["\'])',
+        lambda m: _replace_name_argument(m, old_stem, new_stem, old_version),
+        text,
+        flags=re.MULTILINE,
+    )
+
+    # Adjust leading docstring/version labels without broad free-text replacement.
+    text = re.sub(
+        rf'(^[ruRUfF]*"""?)v{old_version}(\b)',
+        lambda m: m.group(0).replace(f"v{old_version}", f"v{new_version}", 1),
+        text,
+        count=1,
+        flags=re.MULTILINE,
+    )
+    text = re.sub(
+        rf"(^[ruRUfF]*'''?)v{old_version}(\b)",
+        lambda m: m.group(0).replace(f"v{old_version}", f"v{new_version}", 1),
+        text,
+        count=1,
+        flags=re.MULTILINE,
+    )
+    return text
+
+
+def _replace_name_argument(
+    match: re.Match[str],
+    old_stem: str,
+    new_stem: str,
+    old_version: int,
+) -> str:
+    value = match.group(2).replace(old_stem, new_stem, 1)
+    value = value.replace(f"v{old_version}", new_stem, 1)
+    return f"{match.group(1)}{value}{match.group(3)}"
+
+
 def _validate_experiment_name(name: str) -> None:
     if not name or name in {".", ".."}:
         raise QStudyCliError("Experiment name must not be empty.")
@@ -350,6 +505,8 @@ def _prepend_sys_path(path: Path):
 def _shared_template() -> str:
     return """from __future__ import annotations
 
+from functools import cache
+
 import qstudy as qs
 from qstudy.constants import SP500
 
@@ -360,6 +517,7 @@ N_LONG = 25
 N_SHORT = 25
 
 
+@cache
 def load_universe():
     \"\"\"Download the default universe for this experiment.
 
@@ -369,6 +527,7 @@ def load_universe():
     return qs.download(SP500, START_DATE, END_DATE)
 
 
+@cache
 def load_benchmark():
     return qs.download([BENCHMARK_TICKER], START_DATE, END_DATE)
 
@@ -446,11 +605,12 @@ Files:
 - `v0.py`: baseline study entrypoint with `run_study() -> dict`
 - `shared.py`: shared universe, benchmark, and signal helpers
 - `run.py`: execute all top-level `v*.py` files and write `results.json` and `results.csv`
+- `iteration_index.json`: append-only metadata for CLI-created study iterations
 - `log.md`: experiment notes
 
 Workflow:
 1. Edit `shared.py` and `v0.py`.
-2. Add `v1.py`, `v2.py`, and so on as you iterate.
+2. Run `uv run qstudy iterate {name} <version-name>` to create the next version file.
 3. Run `python run.py` inside this directory.
 4. Inspect `results.json` or use `qstudy show-results {name}`.
 """
