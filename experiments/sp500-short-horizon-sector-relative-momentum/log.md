@@ -52,8 +52,40 @@ A market-neutral, short-horizon momentum strategy that trades sector-relative pr
 
 ---
 
+---
+
+## v1–v5 Cost Reduction Attempts
+
+All failed to beat v0 net Sharpe. Key findings:
+
+| Version | Change | Net Sharpe | Turnover | Verdict |
+|---|---|---|---|---|
+| v1 | rebalance=20 | 0.16 | 9.4% | Turnover cut but gross Sharpe collapsed (0.36). Signal decays fast, needs frequent rebalancing. |
+| v2 | skip=5 | -0.37 | 16.6% | Destroyed signal. The edge lives in the most recent days. |
+| v3 | smooth signal (3d) | -0.19 | 16.8% | Blunted signal too much. |
+| v4 | n=10/10 | 0.09 | 16.7% | Benchmark corr jumped to 0.54 — sector neutralization breaks down with only 10 names. |
+| v5 | skip+smooth+rebal20 | 0.08 | 9.2% | Combined: turnover halved but gross Sharpe still collapsed. |
+
+**Conclusion:** v0's ~17% daily turnover is load-bearing — it's not noise, it's how the 20-day sector-relative momentum signal works. The gross Sharpe of 1.05 justifies accepting 4.3%/yr cost drag at 10 bps.
+
+---
+
+## v6 — Threshold-Triggered Rebalance (Dead End)
+
+**Hypothesis:** Rebalance only when the top/bottom N book composition has changed enough (Jaccard overlap < threshold), avoiding turnover on days when the signal is stable.
+
+**What we learned:**
+- Day-over-day Jaccard overlap of the 20-long / 20-short book averages only **0.64 / 0.60**. The 20-day momentum signal rotates ~40% of the book every single day — this is intrinsic to the signal, not noise.
+- A threshold of 0.7 fires on 91% of days. You'd need ~0.3 to skip 25% of days, at which point you only trade on violent regime shifts.
+- Additionally: the beta neutralizer running daily is itself the primary turnover source. Any gate placed *before* neutralization still lets the neutralizer produce fresh weights daily. Any gate *after* neutralization causes a massive catch-up trade when it finally fires (full portfolio replacement).
+- The correct architecture (combined gate + neutralization in one scaler) was implemented in v6 but still fires near-daily given the signal's natural rotation frequency.
+
+**Result:** Threshold-triggered rebalancing is the wrong tool for a signal with intrinsic daily churn. It works well for slower signals (momentum over 60+ days) where the book is stable for weeks at a time.
+
+---
+
 ## Notes
 
-- Sector map is sourced from `qs.sector_map(SP500)` — verify sector assignments periodically as index composition changes.
+- Sector map is sourced from `qs.get_sector_map(SP500)` — verify sector assignments periodically as index composition changes.
 - The beta neutralization loop is O(dates × passes) — slow for large universes. Consider vectorizing if experimenting with top-250+ universes.
-- 10-day rebalance was chosen to limit turnover; test sensitivity with every=5 and every=20.
+- 10-day rebalance (v0) is the right balance: limits neutralizer reshuffling while capturing most of the signal's motion. Gross Sharpe 1.05 with 10 bps costs → net 0.68 is the realistic ceiling for this signal as designed.

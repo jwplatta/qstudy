@@ -17,15 +17,21 @@ from qstudy.signals.filters import (
 from qstudy.study import metrics
 from qstudy.study.engine import run
 from qstudy.study.grid import param_grid
+from qstudy.study.metrics import StudyMetrics
 from qstudy.study.portfolio import (
+    book_overlap_trigger,
     build_long_only,
     build_long_short_positions,
     liquidity,
     liquidity_filter,
     min_adv,
     min_price,
+    rank_change_trigger,
     rebalance,
+    rebalance_on,
+    signal_zscore_trigger,
 )
+from qstudy.study.PortfolioStudy import PortfolioStudy
 from qstudy.study.Study import Study
 
 __all__ = [
@@ -43,6 +49,7 @@ __all__ = [
     "cross_sectional_residualize",
     # study
     "Study",
+    "PortfolioStudy",
     "liquidity_filter",
     "liquidity",
     "min_price",
@@ -50,9 +57,14 @@ __all__ = [
     "build_long_short_positions",
     "build_long_only",
     "rebalance",
+    "rebalance_on",
+    "rank_change_trigger",
+    "book_overlap_trigger",
+    "signal_zscore_trigger",
     "run",
     "param_grid",
     "metrics",
+    "StudyMetrics",
     # charts
     "equity_curve",
     "drawdown_plot",

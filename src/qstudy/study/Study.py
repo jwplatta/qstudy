@@ -21,6 +21,7 @@ from qstudy.signals.filters import (
     vol_filter,
     volume_zscore_filter,
 )
+from qstudy.study.metrics import StudyMetrics
 from qstudy.study.portfolio import (
     build_long_only as _build_long_only,
 )
@@ -28,6 +29,7 @@ from qstudy.study.portfolio import (
     build_long_short_positions,
     liquidity,
     rebalance,
+    rebalance_on,
 )
 from qstudy.study.weighting import (
     apply_equal,
@@ -90,15 +92,18 @@ class Study:
 
     def __init__(
         self,
-        universe: StudyData,
+        universe: StudyData | None = None,
         benchmark: StudyData | None = None,
         factors: StudyData | None = None,
         name: str | None = None,
+        cost_bps: float = 0.0,
     ) -> None:
         """
         Args:
             universe:  :class:`~qstudy.data.loader.StudyData` for the trading universe.
                        Returned by ``qs.download(tickers, start, end)``.
+                       May be omitted when the Study will be run via a
+                       :class:`~qstudy.study.PortfolioStudy` which injects shared data.
             benchmark: Optional :class:`~qstudy.data.loader.StudyData` for the benchmark
                        (e.g. ``qs.download(["SPY"], ...)``). Used for metrics and/or
                        residualization when no factors are provided.
@@ -106,7 +111,7 @@ class Study:
                        factors (takes priority over benchmark).
             name:      Optional label shown in the tqdm progress bar.
         """
-        if not isinstance(universe, StudyData):
+        if universe is not None and not isinstance(universe, StudyData):
             raise TypeError(
                 "universe must be a StudyData object returned by qs.download(). "
                 f"Got {type(universe).__name__}."
@@ -114,31 +119,23 @@ class Study:
 
         self._name = name
         self._factors_data = factors
+        self._cost_bps: float = float(cost_bps)
 
         # Pipeline state
-        self._steps: list[tuple[str, Callable]] = []
+        self._steps: list[tuple[str, str, Callable]] = []
         self._residualize: bool = False
-        self._weighting_fn: Callable | None = None
         self._factor_model: BarraLiteFactorModel | None = None
         self._tradeable_constraint_fns: list[Callable] = []
 
-        # Canonical alignment: all input DataFrames are reindexed to the intersection
-        # of universe, benchmark, and factor date ranges exactly once here.
-        # No downstream code should reindex these core DataFrames.
-        idx = universe.returns.index
-        if benchmark is not None:
-            idx = idx.intersection(benchmark.returns.index)
-        if factors is not None:
-            idx = idx.intersection(factors.returns.index)
-
+        # Initialize empty cache; populated below if universe is provided, or later via _inject_data
         self._cache: dict = {
-            "open": universe.open.reindex(idx).copy(),
-            "high": universe.high.reindex(idx).copy(),
-            "low": universe.low.reindex(idx).copy(),
-            "close": universe.close.reindex(idx).copy(),
-            "volume": universe.volume.reindex(idx).copy(),
-            "returns": universe.returns.reindex(idx).copy(),
-            "log_returns": universe.log_returns.reindex(idx).copy(),
+            "open": None,
+            "high": None,
+            "low": None,
+            "close": None,
+            "volume": None,
+            "returns": None,
+            "log_returns": None,
             "benchmark": None,
             "factor_returns": None,
             "residual_returns": None,
@@ -147,6 +144,7 @@ class Study:
             "signal": None,
             "positions": None,
             "portfolio_returns": None,
+            "gross_portfolio_returns": None,
             "metrics_summary": None,
             "_signal_history": [],
             "_position_history": [],
@@ -156,13 +154,73 @@ class Study:
             "factor_model": None,
             "_xs_daily_r2": None,
         }
+        self._data_injected: bool = False
 
+        if universe is not None:
+            self._inject_data(universe, benchmark, factors)
+
+    def _inject_data(
+        self,
+        universe: StudyData,
+        benchmark: StudyData | None = None,
+        factors: StudyData | None = None,
+    ) -> None:
+        """Populate (or replace) cache data from StudyData objects.
+
+        Called automatically from ``__init__`` when universe is provided, and
+        called by :class:`~qstudy.study.PortfolioStudy` before running each
+        strategy to ensure all strategies share the same aligned dataset.
+
+        Resets signal/position history so the study can be re-run cleanly.
+
+        When called by :class:`~qstudy.study.PortfolioStudy`, ``factors`` is ``None``
+        because the portfolio only shares universe and benchmark.  If the study was
+        originally constructed with its own ``factors=`` argument (stored in
+        ``self._factors_data``), those per-strategy factors are used automatically.
+        """
+        # Per-strategy factors take priority; fall back to whatever was passed in
+        effective_factors = self._factors_data if self._factors_data is not None else factors
+
+        # Canonical alignment: intersection of all provided date ranges
+        idx = universe.returns.index
         if benchmark is not None:
-            bm_returns = benchmark.returns.reindex(idx)
-            self._cache["benchmark"] = bm_returns.iloc[:, 0].copy()
+            idx = idx.intersection(benchmark.returns.index)
+        if effective_factors is not None:
+            idx = idx.intersection(effective_factors.returns.index)
 
-        if factors is not None:
-            self._cache["factor_returns"] = factors.returns.reindex(idx).copy()
+        self._cache["open"] = universe.open.reindex(idx).copy()
+        self._cache["high"] = universe.high.reindex(idx).copy()
+        self._cache["low"] = universe.low.reindex(idx).copy()
+        self._cache["close"] = universe.close.reindex(idx).copy()
+        self._cache["volume"] = universe.volume.reindex(idx).copy()
+        self._cache["returns"] = universe.returns.reindex(idx).copy()
+        self._cache["log_returns"] = universe.log_returns.reindex(idx).copy()
+        self._cache["benchmark"] = (
+            benchmark.returns.reindex(idx).iloc[:, 0].copy() if benchmark is not None else None
+        )
+        self._cache["factor_returns"] = (
+            effective_factors.returns.reindex(idx).copy() if effective_factors is not None else None
+        )
+        # Reset derived/output fields so run() starts fresh
+        for key in (
+            "residual_returns",
+            "_active_returns",
+            "base_signal",
+            "signal",
+            "positions",
+            "portfolio_returns",
+            "gross_portfolio_returns",
+            "metrics_summary",
+            "_liquidity_mask",
+            "_tradeable_mask",
+            "factor_exposures",
+            "factor_model",
+            "_xs_daily_r2",
+        ):
+            self._cache[key] = None
+        self._cache["_signal_history"] = []
+        self._cache["_position_history"] = []
+        self._data_injected = True
 
     # ------------------------------------------------------------------
     # Signal source methods (exactly one required)
@@ -191,12 +249,23 @@ class Study:
         The residualized returns are stored in ``cache["residual_returns"]`` and used
         as ``_active_returns`` by the built-in signal generators.
         """
-        if self._cache["factor_returns"] is None and self._cache["benchmark"] is None:
-            raise ValueError(
-                "residualize_returns() requires either factors= or benchmark= "
-                "to be specified in the Study constructor."
-            )
         self._residualize = True
+        return self
+
+    def with_transaction_costs(self, cost_bps: float) -> Study:
+        """Set a per-trade transaction cost assumption.
+
+        Applied after the final portfolio positions are determined.  Daily net returns
+        are computed as: ``net_ret = gross_ret - turnover * (cost_bps / 10_000)``,
+        where turnover is the one-way daily turnover of the final position DataFrame.
+        Costs are attributed to the same day as the position change, consistent with
+        the engine's convention that ``position[T-1]`` generates ``return[T]``.
+
+        Args:
+            cost_bps: One-way cost in basis points per dollar traded
+                      (e.g. ``10`` = 10 bps = 0.10%).  Default is ``0`` (no costs).
+        """
+        self._cost_bps = float(cost_bps)
         return self
 
     def add_factor_model(
@@ -227,8 +296,6 @@ class Study:
             momentum_window:  Window for momentum exposure.
             vol_window:       Window for volatility exposure.
         """
-        if self._cache["benchmark"] is None:
-            raise ValueError("add_factor_model() requires benchmark= to be set in the constructor.")
         if model != "barra-lite":
             raise ValueError(f"Unknown factor model '{model}'. Only 'barra-lite' is supported.")
         self._factor_model = BarraLiteFactorModel(
@@ -559,7 +626,40 @@ class Study:
             return rebalance(positions, every=every)
 
         fn.__name__ = f"rebalance(every={every})"
-        self._steps.append(("position_scaler", fn))
+        self._steps.append(("position_scaler", "rebalance", fn))
+        return self
+
+    def rebalance_on(self, trigger_fn: Callable) -> "Study":
+        """Threshold-triggered rebalance: only adopt new positions when trigger fires.
+
+        On each date, ``trigger_fn(current_positions, proposed_positions)`` is called.
+        If it returns ``True``, the new portfolio is adopted; otherwise yesterday's
+        weights are carried forward. The trigger always fires on the first date.
+
+        Use the built-in trigger factories from ``qstudy``:
+
+        .. code-block:: python
+
+            import qstudy as qs
+
+            # Rebalance only when rank ordering shifts significantly
+            study.rebalance_on(qs.rank_change_trigger(threshold=0.7))
+
+            # Rebalance only when the signal is extreme cross-sectionally
+            study.rebalance_on(qs.signal_zscore_trigger(signal_df, threshold=1.5))
+
+        Or pass any callable with signature ``(current: pd.Series, proposed: pd.Series) -> bool``.
+
+        Args:
+            trigger_fn: ``(current, proposed) -> bool`` — return True to rebalance.
+        """
+
+        def fn(positions, **cache):
+            signal = cache.get("signal")
+            return rebalance_on(positions, trigger_fn=trigger_fn, signal=signal)
+
+        fn.__name__ = f"rebalance_on({getattr(trigger_fn, '__name__', 'custom')})"
+        self._steps.append(("position_scaler", "rebalance", fn))
         return self
 
     def neutralize_positions(
@@ -633,7 +733,7 @@ class Study:
             return adjusted.fillna(0.0)
 
         scaler.__name__ = f"neutralize_positions({list(constraints.keys())})"
-        self._steps.append(("position_scaler", scaler))
+        self._steps.append(("position_scaler", "neutralize", scaler))
         return self
 
     def scale_risk(self, fn: Callable | None = None, vol_target: float | None = None) -> Study:
@@ -656,7 +756,7 @@ class Study:
             raise ValueError("Provide either fn or vol_target.")
 
         if fn is not None:
-            self._steps.append(("position_scaler", fn))
+            self._steps.append(("position_scaler", "scale_risk", fn))
             return self
 
         # vol_target path
@@ -669,7 +769,7 @@ class Study:
             return positions.mul(scale.fillna(1.0), axis=0)
 
         vol_scaler.__name__ = f"scale_risk(vol_target={vol_target})"
-        self._steps.append(("position_scaler", vol_scaler))
+        self._steps.append(("position_scaler", "scale_risk", vol_scaler))
         return self
 
     def scale_returns(self, fn: Callable) -> Study:
@@ -750,6 +850,7 @@ class Study:
             RuntimeError: If no base signal or position builder has been defined.
         """
         self._validate_pipeline()
+        self._cache["_cost_bps_config"] = self._cost_bps
 
         stages = self._build_stage_list()
         with tqdm(total=len(stages), desc=self._name or "Study.run") as pbar:
@@ -781,19 +882,9 @@ class Study:
             pbar.update(1)
 
             # Pipeline steps — signal generation, transforms, filters, position building, scalers
-            for step_type, fn in self._steps:
+            for step_type, _minor, fn in self._steps:
                 pbar.set_postfix({"stage": step_type})
                 self._execute_step(step_type, fn)
-                pbar.update(1)
-
-            # Weighting
-            if self._weighting_fn is not None:
-                pbar.set_postfix({"stage": "weighting"})
-                cache_kw = {k: v for k, v in self._cache.items() if k != "positions"}
-                self._cache["positions"] = self._weighting_fn(self._cache["positions"], **cache_kw)
-                self._cache["_position_history"].append(
-                    self._position_entry("weighting", self._cache["positions"])
-                )
                 pbar.update(1)
 
             # Backtest engine
@@ -804,17 +895,39 @@ class Study:
             combined_mask = tradeable_mask if tradeable_mask is not None else liq_mask
             if combined_mask is not None:
                 returns_for_engine = returns_for_engine.where(combined_mask)
-            self._cache["portfolio_returns"] = engine.run(
-                self._cache["positions"], returns_for_engine
-            )
+            gross_returns = engine.run(self._cache["positions"], returns_for_engine)
+            self._cache["gross_portfolio_returns"] = gross_returns
+            self._cache["portfolio_returns"] = gross_returns
             pbar.update(1)
+
+            # Transaction costs (optional)
+            if self._cost_bps > 0.0:
+                pbar.set_postfix({"stage": "transaction_costs"})
+                cost_per_dollar = self._cost_bps / 10_000.0
+                cost_series = (
+                    metrics.turnover(self._cache["positions"])
+                    .reindex(gross_returns.index)
+                    .fillna(0.0)
+                    * cost_per_dollar
+                )
+                self._cache["portfolio_returns"] = gross_returns - cost_series
+                pbar.update(1)
 
             # Metrics
             pbar.set_postfix({"stage": "metrics"})
+            positions_for_metrics = (
+                self._cache["positions"]
+                if self._cost_bps > 0.0
+                else self._cache.get("_unscaled_positions", self._cache["positions"])
+            )
             self._cache["metrics_summary"] = metrics.summary(
                 self._cache["portfolio_returns"],
-                positions=self._cache.get("_unscaled_positions", self._cache["positions"]),
+                positions=positions_for_metrics,
                 benchmark=self._cache["benchmark"],
+                gross_returns=(
+                    self._cache["gross_portfolio_returns"] if self._cost_bps > 0.0 else None
+                ),
+                cost_bps=self._cost_bps,
             )
             pbar.update(1)
 
@@ -914,6 +1027,36 @@ class Study:
         self._require_run("metrics_json")
         return json.dumps(self._cache["metrics_summary"].to_dict(), default=str)
 
+    @property
+    def metrics(self) -> StudyMetrics:
+        """Performance metrics as a typed dataclass.
+
+        Requires :meth:`run` to have been called first.
+
+        Example::
+
+            study.metrics.sharpe_ratio
+            study.metrics.max_drawdown
+        """
+        self._require_run("metrics")
+        s = self._cache["metrics_summary"]
+        return StudyMetrics(
+            sharpe_ratio=float(s.get("sharpe", float("nan"))),
+            ann_return=float(s.get("ann_return", float("nan"))),
+            ann_vol=float(s.get("ann_vol", float("nan"))),
+            max_drawdown=float(s.get("max_drawdown", float("nan"))),
+            drawdown_duration=int(s.get("max_drawdown_duration", 0)),
+            avg_daily_turnover=(
+                float(s["avg_daily_turnover"]) if "avg_daily_turnover" in s else None
+            ),
+            benchmark_sharpe=(float(s["benchmark_sharpe"]) if "benchmark_sharpe" in s else None),
+            benchmark_corr=(float(s["benchmark_corr"]) if "benchmark_corr" in s else None),
+            information_ratio=(float(s["information_ratio"]) if "information_ratio" in s else None),
+            gross_ann_return=(float(s["gross_ann_return"]) if "gross_ann_return" in s else None),
+            cost_drag_ann=(float(s["cost_drag_ann"]) if "cost_drag_ann" in s else None),
+            cost_bps=(float(s["cost_bps"]) if "cost_bps" in s else None),
+        )
+
     def to_csv(self, path: str | Path) -> Study:
         """Write portfolio returns to a CSV file.
 
@@ -961,9 +1104,10 @@ class Study:
         obj._factors_data = None
         obj._steps = []
         obj._residualize = False
-        obj._weighting_fn = None
         obj._factor_model = None
         obj._tradeable_constraint_fns = []
+        obj._cost_bps = float(cache.get("_cost_bps_config", 0.0))
+        obj._data_injected = True
         obj._cache = cache
         return obj
 
@@ -977,14 +1121,14 @@ class Study:
             warnings.warn(f"Replacing existing base signal with '{label}'.", stacklevel=3)
             for i in reversed(existing):
                 self._steps.pop(i)
-        self._steps.insert(0, ("base_signal", fn))
+        self._steps.insert(0, ("base_signal", "", fn))
 
     def _append_signal_filter(self, fn: Callable, label: str) -> None:  # noqa: ARG002
         last_sig_idx = max(
             (i for i, s in enumerate(self._steps) if s[0] in ("base_signal", "signal_filter")),
             default=-1,
         )
-        self._steps.insert(last_sig_idx + 1, ("signal_filter", fn))
+        self._steps.insert(last_sig_idx + 1, ("signal_filter", "", fn))
 
     def _set_position_builder(self, fn: Callable, label: str) -> None:
         existing = [i for i, s in enumerate(self._steps) if s[0] == "position_builder"]
@@ -992,14 +1136,33 @@ class Study:
             warnings.warn(f"Replacing existing position builder with '{label}'.", stacklevel=3)
             for i in reversed(existing):
                 self._steps.pop(i)
-        self._steps.append(("position_builder", fn))
+        self._steps.append(("position_builder", "", fn))
 
     def _set_weighting(self, fn: Callable, label: str) -> None:
-        if self._weighting_fn is not None:
+        existing = [i for i, s in enumerate(self._steps) if s[1] == "weight"]
+        if existing:
             warnings.warn(f"Replacing existing weighting scheme with '{label}'.", stacklevel=3)
-        self._weighting_fn = fn
+            for i in reversed(existing):
+                self._steps.pop(i)
+        self._steps.append(("position_scaler", "weight", fn))
 
     def _validate_pipeline(self) -> None:
+        if not self._data_injected:
+            raise RuntimeError(
+                "No data loaded. Either pass universe= to Study() or run via PortfolioStudy."
+            )
+        if self._residualize and (
+            self._cache["factor_returns"] is None and self._cache["benchmark"] is None
+        ):
+            raise ValueError(
+                "residualize_returns() requires either factors= or benchmark= "
+                "to be set (pass them to Study() or use PortfolioStudy with a benchmark)."
+            )
+        if self._factor_model is not None and self._cache["benchmark"] is None:
+            raise ValueError(
+                "add_factor_model() requires benchmark= to be set "
+                "(pass it to Study() or use PortfolioStudy with a benchmark)."
+            )
         types = [s[0] for s in self._steps]
         if "base_signal" not in types:
             raise RuntimeError("No signal source defined. Call .base_signal(fn) before .run().")
@@ -1017,6 +1180,19 @@ class Study:
             )
         if builder_idx < base_idx:
             raise RuntimeError("Position builder cannot appear before the base signal.")
+        # Canonical position-scaler order: weight → scale_risk → neutralize → rebalance
+        _SCALER_PRIORITY = {"weight": 1, "scale_risk": 2, "neutralize": 3, "rebalance": 4}
+        last_priority = 0
+        for major_type, minor_type, fn in self._steps:
+            if major_type == "position_scaler":
+                p = _SCALER_PRIORITY.get(minor_type, 0)
+                if p < last_priority:
+                    raise ValueError(
+                        f"'{fn.__name__}' (type '{minor_type}') declared after a "
+                        f"higher-priority step (priority {last_priority}). "
+                        f"Canonical order: weight → scale_risk → neutralize → rebalance."
+                    )
+                last_priority = p
 
     def _build_stage_list(self) -> list[str]:
         stages: list[str] = []
@@ -1025,11 +1201,11 @@ class Study:
         if self._residualize:
             stages.append("residualize")
         stages.append("setup")
-        for step_type, _ in self._steps:
+        for step_type, _, _ in self._steps:
             stages.append(step_type)
-        if self._weighting_fn is not None:
-            stages.append("weighting")
         stages.append("backtest")
+        if self._cost_bps > 0.0:
+            stages.append("transaction_costs")
         stages.append("metrics")
         return stages
 
