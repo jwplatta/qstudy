@@ -162,6 +162,39 @@ def test_run_experiment_writes_json_and_csv(tmp_path: Path) -> None:
     assert "v1_growth_tilt,2.0,0.34,1.0" in csv_text
 
 
+def test_run_experiment_can_filter_to_single_version_and_overwrite_results(tmp_path: Path) -> None:
+    experiment_dir = tmp_path / "alpha"
+    experiment_dir.mkdir()
+    (experiment_dir / "shared.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (experiment_dir / "v0.py").write_text(
+        "def run_study():\n"
+        "    return {'sharpe': 1.0, 'ann_return': 0.12}\n",
+        encoding="utf-8",
+    )
+    (experiment_dir / "v1_growth_tilt.py").write_text(
+        "def run_study():\n"
+        "    return {'sharpe': 2.0, 'ann_return': 0.34}\n",
+        encoding="utf-8",
+    )
+
+    rows = run_experiment(experiment_dir, version="v1_growth_tilt")
+
+    assert rows == [{"version": "v1_growth_tilt", "sharpe": 2.0, "ann_return": 0.34}]
+    assert read_results_rows(experiment_dir) == rows
+    csv_text = (experiment_dir / "results.csv").read_text(encoding="utf-8")
+    assert "v1_growth_tilt,2.0,0.34" in csv_text
+    assert "v0,1.0,0.12" not in csv_text
+
+
+def test_run_experiment_reports_missing_selected_version(tmp_path: Path) -> None:
+    experiment_dir = tmp_path / "alpha"
+    experiment_dir.mkdir()
+    (experiment_dir / "v0.py").write_text("def run_study():\n    return {}\n", encoding="utf-8")
+
+    with pytest.raises(QStudyCliError, match="Study version not found"):
+        run_experiment(experiment_dir, version="v9")
+
+
 def test_generated_run_py_executes_versions(tmp_path: Path) -> None:
     experiment_dir = create_experiment(tmp_path, "generated-study")
     (experiment_dir / "v0.py").write_text(
@@ -285,6 +318,61 @@ def test_cli_iterate_creates_version_file(
     assert code == 0
     assert "Created iteration at" in out.out
     assert (studies_root / "alpha" / "v1_quality_tilt.py").exists()
+
+
+def test_cli_run_executes_named_experiment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+) -> None:
+    studies_root = tmp_path / "studies"
+    create_experiment(studies_root, "alpha")
+    (studies_root / "alpha" / "v0.py").write_text(
+        "def run_study():\n"
+        "    return {'sharpe': 1.1, 'ann_return': 0.2}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / CONFIG_FILENAME).write_text('studies_dir = "studies"\n', encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    code = main(["run", "alpha"])
+    out = capsys.readouterr()
+
+    assert code == 0
+    assert "Ran 1 study version(s)." in out.out
+    assert read_results_rows(studies_root / "alpha") == [
+        {"version": "v0", "sharpe": 1.1, "ann_return": 0.2}
+    ]
+
+
+def test_cli_run_can_execute_single_selected_version(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+) -> None:
+    studies_root = tmp_path / "studies"
+    create_experiment(studies_root, "alpha")
+    (studies_root / "alpha" / "v0.py").write_text(
+        "def run_study():\n"
+        "    return {'sharpe': 1.1, 'ann_return': 0.2}\n",
+        encoding="utf-8",
+    )
+    (studies_root / "alpha" / "v1_quality.py").write_text(
+        "def run_study():\n"
+        "    return {'sharpe': 2.2, 'ann_return': 0.3}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / CONFIG_FILENAME).write_text('studies_dir = "studies"\n', encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    code = main(["run", "alpha", "--version", "v1_quality"])
+    out = capsys.readouterr()
+
+    assert code == 0
+    assert "Ran 1 study version(s)." in out.out
+    assert read_results_rows(studies_root / "alpha") == [
+        {"version": "v1_quality", "sharpe": 2.2, "ann_return": 0.3}
+    ]
 
 
 def test_render_results_table_omits_missing_columns() -> None:

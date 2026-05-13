@@ -6,6 +6,7 @@ Current commands:
 
 - `qstudy create <name>`
 - `qstudy iterate <study> <version-name>`
+- `qstudy run <name>`
 - `qstudy list`
 - `qstudy show-results <name>`
 
@@ -27,6 +28,8 @@ Run the CLI with `uv run`:
 uv run qstudy list
 uv run qstudy create my-experiment
 uv run qstudy iterate my-experiment volume-confirmed
+uv run qstudy run my-experiment
+uv run qstudy run my-experiment --version v1_volume_confirmed
 uv run qstudy show-results my-experiment
 ```
 
@@ -141,6 +144,25 @@ momentum-test  1
 
 Only top-level version files count. Nested files are ignored.
 
+## `qstudy run <name>`
+
+Runs all top-level `v*.py` files in the named experiment and writes `results.json` plus `results.csv`.
+
+Example:
+
+```bash
+uv run qstudy run residual-mr
+uv run qstudy run residual-mr --version v1_volume_confirmed
+```
+
+Behavior:
+
+- resolves `<name>` under the configured studies root
+- uses the same execution path as the generated `run.py`
+- accepts `--version <stem-or-filename>` to run exactly one version
+- prints how many study versions were run
+- overwrites `results.json` and `results.csv` with exactly the versions that were run
+
 ## `qstudy show-results <name>`
 
 Reads `<experiment>/results.json` and prints a terminal summary table.
@@ -174,8 +196,7 @@ Typical flow:
 ```bash
 uv run qstudy create residual-mr
 uv run qstudy iterate residual-mr volume-confirmed
-cd experiments/residual-mr
-python run.py
+uv run qstudy run residual-mr
 uv run qstudy show-results residual-mr
 ```
 
@@ -195,6 +216,9 @@ What `run.py` does:
 - collects one metrics dict per version
 - writes `results.json`
 - writes `results.csv`
+
+`qstudy run <name>` calls that same execution path without requiring you to `cd` into the experiment directory first.
+`qstudy run <name> --version <version>` uses that same execution path but filters to one exact version stem or filename.
 
 The generated `v0.py` uses a minimal runnable baseline:
 
@@ -237,6 +261,7 @@ Example:
 
 - one row per version
 - same columns as `results.json`
+- overwritten on every run, including filtered single-version runs
 
 `iteration_index.json`:
 

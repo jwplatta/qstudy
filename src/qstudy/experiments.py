@@ -221,11 +221,12 @@ def iterate_experiment(studies_root: Path, study: str, version_name: str) -> Pat
     return destination_path
 
 
-def run_experiment(experiment_dir: Path) -> list[dict[str, Any]]:
+def run_experiment(experiment_dir: Path, version: str | None = None) -> list[dict[str, Any]]:
     if not experiment_dir.exists():
         raise QStudyCliError(f"Experiment not found: {experiment_dir}")
 
     version_files = discover_version_files(experiment_dir)
+    version_files = _select_version_files(version_files, version)
     rows: list[dict[str, Any]] = []
     with _prepend_sys_path(experiment_dir):
         for version_file in version_files:
@@ -398,6 +399,18 @@ def sanitize_version_name(version_name: str) -> str:
     if not normalized:
         raise QStudyCliError("Version name must include at least one letter or number.")
     return normalized
+
+
+def _select_version_files(version_files: list[Path], version: str | None) -> list[Path]:
+    if version is None:
+        return version_files
+
+    matches = [path for path in version_files if path.stem == version or path.name == version]
+    if not matches:
+        raise QStudyCliError(f"Study version not found: {version}")
+    if len(matches) > 1:
+        raise QStudyCliError(f"Study version is ambiguous: {version}")
+    return matches
 
 
 def _parse_version_stem(stem: str) -> tuple[int, str | None]:
