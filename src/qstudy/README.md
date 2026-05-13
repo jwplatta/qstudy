@@ -14,6 +14,8 @@ from qstudy.constants import SP500, SECTOR_ETFS
 ## Data
 
 Single API call returns `StudyData` with `open`, `high`, `low`, `close`, `volume`, `returns`, and `log_returns`.
+If `data_dir` is configured in `.qstudy.toml`, `qs.download(...)` caches the full dataset on disk
+keyed by the normalized yfinance request.
 
 ```python
 d = qs.download(SP500, start="2015-01-01", end="2023-12-31")
@@ -32,6 +34,13 @@ For factor/benchmark tickers (used in `residualize`):
 ```python
 d_factors = qs.download(["SPY", "XLK"], start="2015-01-01", end="2023-12-31")
 factor_returns = d_factors.returns
+```
+
+Optional `.qstudy.toml`:
+
+```toml
+studies_dir = "experiments"
+data_dir = ".qstudy-data"
 ```
 
 ---

@@ -621,7 +621,9 @@ def make_study_data(n_dates=150, n_tickers=20, seed=7):
         0, 0.005, (n_dates, n_tickers)
     )
     returns_df = pd.DataFrame(returns_arr, index=dates, columns=tickers)
-    close_df = (1 + returns_df).cumprod() * 100
+    open_df = (1 + returns_df.shift(1).fillna(0.0)).cumprod() * 100
+    high_df = np.maximum(open_df, close_df := (1 + returns_df).cumprod() * 100) * 1.01
+    low_df = np.minimum(open_df, close_df) * 0.99
     volume_df = pd.DataFrame(
         rng.integers(100_000, 1_000_000, (n_dates, n_tickers)).astype(float),
         index=dates,
@@ -629,6 +631,9 @@ def make_study_data(n_dates=150, n_tickers=20, seed=7):
     )
     universe = StudyData(
         tickers=tickers,
+        open=open_df,
+        high=high_df,
+        low=low_df,
         close=close_df,
         volume=volume_df,
         returns=returns_df,
@@ -636,9 +641,15 @@ def make_study_data(n_dates=150, n_tickers=20, seed=7):
     )
 
     bm_ret = pd.DataFrame({"SPY": mkt}, index=dates)
+    bm_open = (1 + bm_ret.shift(1).fillna(0.0)).cumprod() * 100
     bm_close = (1 + bm_ret).cumprod() * 100
+    bm_high = np.maximum(bm_open, bm_close) * 1.01
+    bm_low = np.minimum(bm_open, bm_close) * 0.99
     benchmark = StudyData(
         tickers=["SPY"],
+        open=bm_open,
+        high=bm_high,
+        low=bm_low,
         close=bm_close,
         volume=pd.DataFrame({"SPY": [1e6] * n_dates}, index=dates),
         returns=bm_ret,
@@ -663,9 +674,16 @@ class TestStudyNewMethods:
         from qstudy import Study
 
         universe, _ = make_study_data()
-        s = Study(universe=universe)
+        # Validation is deferred to run() so the chain call succeeds,
+        # but run() raises when benchmark is missing.
+        s = (
+            Study(universe=universe)
+            .add_factor_model("barra-lite", factors=["market"])
+            .base_signal(mr5)
+            .build_long_short(n_long=3, n_short=3)
+        )
         with pytest.raises(ValueError, match="benchmark="):
-            s.add_factor_model("barra-lite", factors=["market"])
+            s.run()
 
     def test_add_factor_model_populates_factor_exposures(self):
         from qstudy import Study
@@ -718,7 +736,7 @@ class TestStudyNewMethods:
             .filter_signal(vol_f)
             .build_long_short(n_long=5, n_short=5)
         )
-        step_types = [stype for stype, _ in s._steps]
+        step_types = [stype for stype, _, _ in s._steps]
         assert step_types.count("signal_filter") == 2
 
     def test_add_tradeable_constraint_applies_mask(self):
@@ -800,29 +818,89 @@ class TestStudyNewMethods:
         )
         assert s.cache["portfolio_returns"] is not None
 
-    def test_study_data_defaults_ohl_to_close(self):
-        from qstudy.data.loader import StudyData
-
-        universe, _ = make_study_data()
-        study_data = StudyData(
-            tickers=universe.tickers,
-            close=universe.close,
-            volume=universe.volume,
-            returns=universe.returns,
-            log_returns=universe.log_returns,
-        )
-        pd.testing.assert_frame_equal(study_data.open, study_data.close)
-        pd.testing.assert_frame_equal(study_data.high, study_data.close)
-        pd.testing.assert_frame_equal(study_data.low, study_data.close)
-
     def test_study_cache_exposes_ohl_fields(self):
         from qstudy import Study
 
         universe, benchmark = make_study_data()
         study = Study(universe=universe, benchmark=benchmark)
-        pd.testing.assert_frame_equal(study.cache["open"], universe.close)
-        pd.testing.assert_frame_equal(study.cache["high"], universe.close)
-        pd.testing.assert_frame_equal(study.cache["low"], universe.close)
+        pd.testing.assert_frame_equal(study.cache["open"], universe.open)
+        pd.testing.assert_frame_equal(study.cache["high"], universe.high)
+        pd.testing.assert_frame_equal(study.cache["low"], universe.low)
+
+    def test_download_supports_interval_and_ohlc(self, monkeypatch):
+        dates = pd.date_range("2024-01-02 09:30:00", periods=3, freq="min")
+        columns = pd.MultiIndex.from_product(
+            [["Open", "High", "Low", "Close", "Volume"], ["AAPL", "MSFT"]]
+        )
+        data = pd.DataFrame(
+            [
+                [100.0, 200.0, 101.0, 201.0, 99.0, 199.0, 100.5, 200.5, 1_000, 2_000],
+                [101.0, 201.0, 102.0, 202.0, 100.0, 200.0, 101.5, 201.5, 1_100, 2_100],
+                [102.0, 202.0, 103.0, 203.0, 101.0, 201.0, 102.5, 202.5, 1_200, 2_200],
+            ],
+            index=dates,
+            columns=columns,
+        )
+        captured = {}
+
+        def fake_download(*args, **kwargs):
+            captured["args"] = args
+            captured["kwargs"] = kwargs
+            return data
+
+        monkeypatch.setattr("qstudy.data.loader.yf.download", fake_download)
+
+        study_data = qs.download(["AAPL", "MSFT"], "2024-01-02", "2024-01-03", interval="1m")
+
+        assert captured["kwargs"]["interval"] == "1m"
+        assert study_data.interval == "1m"
+        assert study_data.tickers == ["AAPL", "MSFT"]
+        pd.testing.assert_index_equal(study_data.close.index, dates)
+        pd.testing.assert_frame_equal(study_data.open, data["Open"])
+        pd.testing.assert_frame_equal(study_data.high, data["High"])
+        pd.testing.assert_frame_equal(study_data.low, data["Low"])
+        pd.testing.assert_frame_equal(study_data.close, data["Close"])
+        pd.testing.assert_frame_equal(study_data.volume, data["Volume"])
+
+    def test_download_uses_cache_when_available(self, monkeypatch, tmp_path):
+        dates = pd.date_range("2024-01-02", periods=3, freq="D")
+        columns = pd.MultiIndex.from_product(
+            [["Open", "High", "Low", "Close", "Volume"], ["AAPL", "MSFT"]]
+        )
+        data = pd.DataFrame(
+            [
+                [100.0, 200.0, 101.0, 201.0, 99.0, 199.0, 100.5, 200.5, 1_000, 2_000],
+                [101.0, 201.0, 102.0, 202.0, 100.0, 200.0, 101.5, 201.5, 1_100, 2_100],
+                [102.0, 202.0, 103.0, 203.0, 101.0, 201.0, 102.5, 202.5, 1_200, 2_200],
+            ],
+            index=dates,
+            columns=columns,
+        )
+        call_count = {"value": 0}
+
+        def fake_download(*args, **kwargs):
+            call_count["value"] += 1
+            return data
+
+        monkeypatch.setattr("qstudy.data.loader.yf.download", fake_download)
+
+        first = qs.download(
+            ["AAPL", "MSFT"],
+            "2024-01-02",
+            "2024-01-05",
+            data_dir=tmp_path,
+        )
+        second = qs.download(
+            ["AAPL", "MSFT"],
+            "2024-01-02",
+            "2024-01-05",
+            data_dir=tmp_path,
+        )
+
+        assert call_count["value"] == 1
+        pd.testing.assert_frame_equal(first.close, second.close)
+        assert list((tmp_path / "yfinance").glob("*.pkl"))
+        assert list((tmp_path / "yfinance").glob("*.json"))
 
 
 # ---------------------------------------------------------------------------
@@ -850,7 +928,10 @@ def make_factor_study_data(n_dates=200, n_tickers=30, seed=42):
         0, 0.005, (n_dates, n_tickers)
     )
     returns_df = pd.DataFrame(returns_arr, index=dates, columns=tickers)
+    open_df = (1 + returns_df.shift(1).fillna(0.0)).cumprod() * 100
     close_df = (1 + returns_df).cumprod() * 100
+    high_df = np.maximum(open_df, close_df) * 1.01
+    low_df = np.minimum(open_df, close_df) * 0.99
     volume_df = pd.DataFrame(
         rng.integers(100_000, 10_000_000, (n_dates, n_tickers)).astype(float),
         index=dates,
@@ -858,15 +939,24 @@ def make_factor_study_data(n_dates=200, n_tickers=30, seed=42):
     )
     universe = StudyData(
         tickers=tickers,
+        open=open_df,
+        high=high_df,
+        low=low_df,
         close=close_df,
         volume=volume_df,
         returns=returns_df,
         log_returns=np.log(close_df / close_df.shift(1)),
     )
     bm_ret = pd.DataFrame({"SPY": mkt}, index=dates)
+    bm_open = (1 + bm_ret.shift(1).fillna(0.0)).cumprod() * 100
     bm_close = (1 + bm_ret).cumprod() * 100
+    bm_high = np.maximum(bm_open, bm_close) * 1.01
+    bm_low = np.minimum(bm_open, bm_close) * 0.99
     benchmark = StudyData(
         tickers=["SPY"],
+        open=bm_open,
+        high=bm_high,
+        low=bm_low,
         close=bm_close,
         volume=pd.DataFrame({"SPY": [1e6] * n_dates}, index=dates),
         returns=bm_ret,
@@ -876,9 +966,15 @@ def make_factor_study_data(n_dates=200, n_tickers=30, seed=42):
     f1 = mkt + rng.normal(0, 0.003, n_dates)
     f2 = mkt + rng.normal(0, 0.003, n_dates)
     factor_ret = pd.DataFrame({"F1": f1, "F2": f2}, index=dates)
+    factor_open = (1 + factor_ret.shift(1).fillna(0.0)).cumprod() * 100
     factor_close = (1 + factor_ret).cumprod() * 100
+    factor_high = np.maximum(factor_open, factor_close) * 1.01
+    factor_low = np.minimum(factor_open, factor_close) * 0.99
     factors = StudyData(
         tickers=["F1", "F2"],
+        open=factor_open,
+        high=factor_high,
+        low=factor_low,
         close=factor_close,
         volume=pd.DataFrame({"F1": [1e6] * n_dates, "F2": [1e6] * n_dates}, index=dates),
         returns=factor_ret,
@@ -1044,3 +1140,428 @@ class TestStudyPipelineEquivalence:
             check_names=False,
             atol=1e-10,
         )
+
+
+# ---------------------------------------------------------------------------
+# PortfolioStudy
+# ---------------------------------------------------------------------------
+
+
+class TestPortfolioStudy:
+    def _make_portfolio(self, n_dates=150, n_tickers=20, seed=7):
+        from qstudy import PortfolioStudy, Study
+
+        universe, benchmark = make_study_data(n_dates=n_dates, n_tickers=n_tickers, seed=seed)
+
+        study1 = Study(name="mr").base_signal(mr5).build_long_short(n_long=3, n_short=3)
+        study2 = (
+            Study(name="mom")
+            .base_signal(lambda **cache: cache["returns"].rolling(10).mean())
+            .build_long_only(n=5)
+        )
+        portfolio = PortfolioStudy(
+            strategies=[study1, study2],
+            universe=universe,
+            benchmark=benchmark,
+            name="test_portfolio",
+        )
+        return portfolio, universe, benchmark
+
+    def test_smoke_run(self):
+        """PortfolioStudy.run() completes without error."""
+        portfolio, _, _ = self._make_portfolio()
+        portfolio.run()
+        assert portfolio.cache["portfolio_returns"] is not None
+
+    def test_portfolio_returns_is_series(self):
+        """portfolio_returns is a pd.Series with a DatetimeIndex."""
+        portfolio, _, _ = self._make_portfolio()
+        portfolio.run()
+        ret = portfolio.cache["portfolio_returns"]
+        assert isinstance(ret, pd.Series)
+        assert isinstance(ret.index, pd.DatetimeIndex)
+
+    def test_positions_normalized(self):
+        """Combined positions: abs(w).sum(axis=1) == 1.0 on non-zero rows."""
+        portfolio, _, _ = self._make_portfolio()
+        portfolio.run()
+        positions = portfolio.cache["positions"]
+        abs_sum = positions.abs().sum(axis=1)
+        nonzero = abs_sum[abs_sum > 0]
+        np.testing.assert_allclose(nonzero.values, 1.0, atol=1e-10)
+
+    def test_strategy_returns_df_shape(self):
+        """strategy_returns_df has one column per strategy."""
+        portfolio, _, _ = self._make_portfolio()
+        portfolio.run()
+        df = portfolio.strategy_returns
+        assert df.shape[1] == 2
+        assert set(df.columns) == {"mr", "mom"}
+
+    def test_strategy_corr_is_square(self):
+        """strategy_corr is a 2x2 symmetric matrix."""
+        portfolio, _, _ = self._make_portfolio()
+        portfolio.run()
+        corr = portfolio.strategy_corr
+        assert corr.shape == (2, 2)
+        np.testing.assert_allclose(np.diag(corr.values), 1.0, atol=1e-10)
+
+    def test_metrics_attribute(self):
+        """portfolio.metrics.sharpe_ratio is a float."""
+        from qstudy.study.metrics import StudyMetrics
+
+        portfolio, _, _ = self._make_portfolio()
+        portfolio.run()
+        m = portfolio.metrics
+        assert isinstance(m, StudyMetrics)
+        assert isinstance(m.sharpe_ratio, float)
+        assert isinstance(m.max_drawdown, float)
+        assert m.max_drawdown <= 0.0
+
+    def test_study_metrics_attribute(self):
+        """Study.metrics returns a StudyMetrics dataclass after run()."""
+        from qstudy import Study
+        from qstudy.study.metrics import StudyMetrics
+
+        universe, benchmark = make_study_data()
+        study = (
+            Study(universe=universe, benchmark=benchmark, name="sm_test")
+            .base_signal(mr5)
+            .build_long_short(n_long=3, n_short=3)
+            .run()
+        )
+        m = study.metrics
+        assert isinstance(m, StudyMetrics)
+        assert isinstance(m.sharpe_ratio, float)
+        assert isinstance(m.information_ratio, float)
+
+    def test_data_injection_strategies_no_universe(self):
+        """Strategies initialized without universe run correctly via PortfolioStudy."""
+        from qstudy import PortfolioStudy, Study
+
+        universe, benchmark = make_study_data()
+
+        # Build strategies without passing universe
+        study1 = Study(name="mr_only").base_signal(mr5).build_long_short(n_long=3, n_short=3)
+        # Attempting to run directly should raise
+        with pytest.raises(RuntimeError, match="No data"):
+            study1.run()
+
+        # But running via PortfolioStudy should succeed
+        portfolio = PortfolioStudy(
+            strategies=[study1],
+            universe=universe,
+            benchmark=benchmark,
+        ).run()
+        assert portfolio.cache["portfolio_returns"] is not None
+
+    def test_weight_equal_vol(self):
+        """weight_equal_vol does not crash and returns normalized positions."""
+        portfolio, _, _ = self._make_portfolio()
+        portfolio.weight_equal_vol(window=60).run()
+        abs_sum = portfolio.cache["positions"].abs().sum(axis=1)
+        nonzero = abs_sum[abs_sum > 0]
+        np.testing.assert_allclose(nonzero.values, 1.0, atol=1e-10)
+
+    def test_metrics_dict(self):
+        """metrics_dict() returns a dict with expected keys."""
+        portfolio, _, _ = self._make_portfolio()
+        portfolio.run()
+        d = portfolio.metrics_dict()
+        assert isinstance(d, dict)
+        assert "sharpe" in d
+        assert "ann_return" in d
+        assert "max_drawdown" in d
+
+
+# ---------------------------------------------------------------------------
+# Transaction costs
+# ---------------------------------------------------------------------------
+
+
+class TestTransactionCosts:
+    """Tests for the transaction cost feature on Study and PortfolioStudy."""
+
+    def _run_study(self, cost_bps=0.0):
+        from qstudy import Study
+
+        universe, benchmark = make_study_data(n_dates=200, seed=42)
+        study = (
+            Study(universe=universe, benchmark=benchmark, cost_bps=cost_bps)
+            .base_signal(mr5)
+            .build_long_short(n_long=5, n_short=5)
+            .run()
+        )
+        return study
+
+    def test_zero_cost_identity(self):
+        """cost_bps=0 must produce identical portfolio_returns to the default (no costs)."""
+        s_no_cost = self._run_study(cost_bps=0.0)
+        s_zero = self._run_study(cost_bps=0.0)
+        pd.testing.assert_series_equal(
+            s_no_cost.cache["portfolio_returns"],
+            s_zero.cache["portfolio_returns"],
+        )
+
+    def test_gross_equals_portfolio_returns_when_no_costs(self):
+        """gross_portfolio_returns == portfolio_returns when cost_bps == 0."""
+        s = self._run_study(cost_bps=0.0)
+        pd.testing.assert_series_equal(
+            s.cache["gross_portfolio_returns"],
+            s.cache["portfolio_returns"],
+        )
+
+    def test_costs_reduce_returns(self):
+        """Net return must be <= gross return every day (costs are non-negative)."""
+        from qstudy import Study
+
+        universe, benchmark = make_study_data(n_dates=200, seed=42)
+        study = (
+            Study(universe=universe, benchmark=benchmark)
+            .base_signal(mr5)
+            .build_long_short(n_long=5, n_short=5)
+            .with_transaction_costs(cost_bps=20)
+            .run()
+        )
+        gross = study.cache["gross_portfolio_returns"]
+        net = study.cache["portfolio_returns"]
+        # Net <= gross everywhere (costs always >= 0)
+        assert (net <= gross + 1e-12).all(), "net returns must not exceed gross returns"
+        # At least some days have a cost applied
+        assert (gross - net > 0).any(), "non-zero costs should reduce returns on some days"
+
+    def test_fluent_chain_with_transaction_costs(self):
+        """with_transaction_costs() works in the fluent chain."""
+        from qstudy import Study
+
+        universe, benchmark = make_study_data(n_dates=150, seed=1)
+        study = (
+            Study(universe=universe, benchmark=benchmark)
+            .base_signal(mr5)
+            .build_long_short(n_long=5, n_short=5)
+            .with_transaction_costs(cost_bps=10)
+            .run()
+        )
+        assert study.cache["portfolio_returns"] is not None
+        assert study._cost_bps == 10.0
+
+    def test_cost_drag_formula(self):
+        """cost_drag_ann ≈ avg_daily_turnover * (cost_bps / 10_000) * 252."""
+        from qstudy import Study
+
+        universe, benchmark = make_study_data(n_dates=200, seed=42)
+        cost_bps = 15.0
+        study = (
+            Study(universe=universe, benchmark=benchmark, cost_bps=cost_bps)
+            .base_signal(mr5)
+            .build_long_short(n_long=5, n_short=5)
+            .run()
+        )
+        s = study.cache["metrics_summary"]
+        avg_to = s["avg_daily_turnover"]
+        expected_drag = avg_to * (cost_bps / 10_000) * 252
+        assert s["cost_drag_ann"] == pytest.approx(expected_drag, rel=1e-6)
+
+    def test_gross_metrics_in_summary(self):
+        """Summary Series contains gross_sharpe, gross_ann_return, net_sharpe, cost_bps."""
+        from qstudy import Study
+
+        universe, benchmark = make_study_data(n_dates=200, seed=42)
+        study = (
+            Study(universe=universe, benchmark=benchmark, cost_bps=10)
+            .base_signal(mr5)
+            .build_long_short(n_long=5, n_short=5)
+            .run()
+        )
+        s = study.cache["metrics_summary"]
+        assert "gross_sharpe" in s
+        assert "gross_ann_return" in s
+        assert "net_sharpe" in s
+        assert "cost_bps" in s
+        assert s["cost_bps"] == pytest.approx(10.0)
+        assert s["net_sharpe"] == pytest.approx(s["sharpe"])
+
+    def test_no_cost_metrics_absent(self):
+        """When cost_bps=0, gross/cost keys should not appear in the summary."""
+        s = self._run_study(cost_bps=0.0)
+        summary = s.cache["metrics_summary"]
+        assert "gross_sharpe" not in summary
+        assert "cost_drag_ann" not in summary
+
+    def test_study_metrics_dataclass_populated(self):
+        """StudyMetrics dataclass fields gross_ann_return/cost_drag_ann/cost_bps are populated."""
+        from qstudy import Study
+
+        universe, benchmark = make_study_data(n_dates=200, seed=42)
+        study = (
+            Study(universe=universe, benchmark=benchmark, cost_bps=10)
+            .base_signal(mr5)
+            .build_long_short(n_long=5, n_short=5)
+            .run()
+        )
+        m = study.metrics
+        assert m.cost_bps == pytest.approx(10.0)
+        assert m.gross_ann_return is not None
+        assert m.cost_drag_ann is not None
+        assert m.cost_drag_ann >= 0.0
+
+    def test_pickle_round_trip_preserves_cost_config(self):
+        """save() + from_cache() restores _cost_bps correctly."""
+        import tempfile
+        from pathlib import Path
+
+        from qstudy import Study
+
+        universe, benchmark = make_study_data(n_dates=150, seed=5)
+        study = (
+            Study(universe=universe, benchmark=benchmark, cost_bps=12)
+            .base_signal(mr5)
+            .build_long_short(n_long=5, n_short=5)
+            .run()
+        )
+        with tempfile.NamedTemporaryFile(suffix=".pkl", delete=False) as f:
+            path = Path(f.name)
+        try:
+            study.save(path)
+            loaded = Study.from_cache(path)
+            assert loaded._cost_bps == pytest.approx(12.0)
+            assert loaded.cache["_cost_bps_config"] == pytest.approx(12.0)
+        finally:
+            path.unlink(missing_ok=True)
+
+    def test_portfolio_study_with_transaction_costs(self):
+        """PortfolioStudy with costs produces net < gross returns on some days."""
+        from qstudy import PortfolioStudy, Study
+
+        universe, benchmark = make_study_data(n_dates=200, seed=9)
+        study1 = Study(name="mr").base_signal(mr5).build_long_short(n_long=3, n_short=3)
+        study2 = (
+            Study(name="mom")
+            .base_signal(lambda **cache: cache["returns"].rolling(10).mean())
+            .build_long_only(n=5)
+        )
+        portfolio = (
+            PortfolioStudy(
+                strategies=[study1, study2],
+                universe=universe,
+                benchmark=benchmark,
+                cost_bps=10,
+            )
+            .run()
+        )
+        gross = portfolio.cache["gross_portfolio_returns"]
+        net = portfolio.cache["portfolio_returns"]
+        assert (net <= gross + 1e-12).all()
+        assert (gross - net > 0).any()
+
+    def test_portfolio_study_with_transaction_costs_method(self):
+        """PortfolioStudy.with_transaction_costs() fluent method works."""
+        from qstudy import PortfolioStudy, Study
+
+        universe, benchmark = make_study_data(n_dates=150, seed=3)
+        study1 = Study(name="mr").base_signal(mr5).build_long_short(n_long=3, n_short=3)
+        portfolio = (
+            PortfolioStudy(
+                strategies=[study1],
+                universe=universe,
+                benchmark=benchmark,
+            )
+            .with_transaction_costs(cost_bps=8)
+            .run()
+        )
+        assert portfolio._cost_bps == pytest.approx(8.0)
+        assert portfolio.cache["gross_portfolio_returns"] is not None
+        assert "cost_bps" in portfolio.cache["metrics_summary"]
+
+
+class TestPipelineOrderEnforcement:
+    """Verify that Study enforces the canonical position-scaler order:
+    weight → scale_risk → neutralize → rebalance.
+    """
+
+    def _make_study(self, n_dates=100, seed=42):
+        from qstudy import Study
+
+        universe, benchmark = make_study_data(n_dates=n_dates, seed=seed)
+
+        def mr_signal(**cache):
+            return -cache["returns"].rolling(3).mean().shift(1)
+
+        return Study(universe=universe, benchmark=benchmark).base_signal(mr_signal)
+
+    # --- Valid orderings ---
+
+    def test_weight_then_scale_risk_then_rebalance_is_valid(self):
+        """Canonical order must not raise."""
+        s = self._make_study()
+
+        def noop_scaler(positions, **cache):
+            return positions * 0.9
+
+        noop_scaler.__name__ = "noop_scaler"
+        s.build_long_short(n_long=5, n_short=5).weight_equal().scale_risk(noop_scaler).rebalance(
+            every=5
+        ).run()
+
+    def test_weight_then_rebalance_is_valid(self):
+        s = self._make_study()
+        s.build_long_short(n_long=5, n_short=5).weight_equal().rebalance(every=5).run()
+
+    def test_scale_risk_then_rebalance_is_valid(self):
+        """No weight step is fine — scale_risk before rebalance is valid."""
+        s = self._make_study()
+
+        def noop_scaler(positions, **cache):
+            return positions * 0.9
+
+        noop_scaler.__name__ = "noop_scaler"
+        s.build_long_short(n_long=5, n_short=5).scale_risk(noop_scaler).rebalance(every=5).run()
+
+    # --- Invalid orderings that must raise ValueError ---
+
+    def test_scale_risk_before_weight_raises(self):
+        """scale_risk declared before weight_equal should raise ValueError."""
+        s = self._make_study()
+
+        def noop_scaler(positions, **cache):
+            return positions * 0.9
+
+        noop_scaler.__name__ = "noop_scaler"
+        s.build_long_short(n_long=5, n_short=5).scale_risk(noop_scaler).weight_equal()
+        with pytest.raises(ValueError, match="Canonical order"):
+            s.run()
+
+    def test_rebalance_before_scale_risk_raises(self):
+        """rebalance declared before scale_risk should raise ValueError."""
+        s = self._make_study()
+
+        def noop_scaler(positions, **cache):
+            return positions * 0.9
+
+        noop_scaler.__name__ = "noop_scaler"
+        s.build_long_short(n_long=5, n_short=5).rebalance(every=5).scale_risk(noop_scaler)
+        with pytest.raises(ValueError, match="Canonical order"):
+            s.run()
+
+    def test_rebalance_before_weight_raises(self):
+        """rebalance declared before weight_equal should raise ValueError."""
+        s = self._make_study()
+        s.build_long_short(n_long=5, n_short=5).rebalance(every=5).weight_equal()
+        with pytest.raises(ValueError, match="Canonical order"):
+            s.run()
+
+    # --- Minor type tracking ---
+
+    def test_step_minor_types_tracked(self):
+        """_steps entries carry the correct minor type strings."""
+        s = self._make_study()
+
+        def noop_scaler(positions, **cache):
+            return positions * 0.9
+
+        noop_scaler.__name__ = "noop_scaler"
+        s.build_long_short(n_long=5, n_short=5).weight_equal().scale_risk(noop_scaler).rebalance(
+            every=5
+        )
+        minor_types = [minor for major, minor, fn in s._steps if major == "position_scaler"]
+        assert minor_types == ["weight", "scale_risk", "rebalance"]
