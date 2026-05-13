@@ -173,3 +173,153 @@ def rebalance(
     result = positions.copy()
     result[~mask] = np.nan
     return result.ffill()
+
+
+def rebalance_on(
+    positions: pd.DataFrame,
+    trigger_fn: Callable[[pd.Series, pd.Series], bool],
+    signal: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Apply a threshold-triggered rebalance schedule.
+
+    On each date, calls ``trigger_fn(current_row, proposed_row)`` to decide whether
+    to adopt the new portfolio or carry forward the existing one. The trigger fires
+    on the very first date unconditionally.
+
+    When ``signal`` is provided, the trigger receives signal rows (raw alpha scores)
+    rather than position weight rows. This is the preferred mode for
+    :func:`rank_change_trigger` because neutralized weights change very little
+    day-to-day even when the underlying signal ranking has shifted materially.
+
+    NaN convention: same as :func:`rebalance` — NaN means ineligible/not held.
+
+    Args:
+        positions:   Full proposed positions DataFrame (dates x tickers), as if
+                     rebalancing daily. NaN = ineligible.
+        trigger_fn:  Callable ``(current: pd.Series, proposed: pd.Series) -> bool``.
+                     Return ``True`` to rebalance (adopt ``proposed``), ``False``
+                     to hold (carry ``current`` forward).
+        signal:      Optional signal DataFrame (dates x tickers). When provided,
+                     trigger receives signal rows instead of position rows.
+
+    Returns:
+        Rebalanced positions DataFrame, same shape as input.
+
+    Built-in trigger factories (importable from ``qstudy``):
+        - :func:`rank_change_trigger` — rebalance when signal rank-correlation drops below threshold
+        - :func:`signal_zscore_trigger` — rebalance when signal z-score exceeds threshold
+    """
+    compare = signal if signal is not None else positions
+    result = positions.copy()
+    current_pos = positions.iloc[0]
+    current_cmp = compare.iloc[0]
+    for i, date in enumerate(positions.index):
+        proposed_pos = positions.loc[date]
+        proposed_cmp = compare.loc[date]
+        if i == 0 or trigger_fn(current_cmp, proposed_cmp):
+            current_pos = proposed_pos
+            current_cmp = proposed_cmp
+        else:
+            result.loc[date] = current_pos
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Built-in trigger factories for rebalance_on
+# ---------------------------------------------------------------------------
+
+
+def rank_change_trigger(threshold: float = 0.7) -> Callable[[pd.Series, pd.Series], bool]:
+    """Rebalance when rank-correlation between current and proposed *signal rows* drops below threshold.
+
+    The trigger receives signal rows (not position weights) so it measures genuine
+    re-ranking of the underlying alpha, not noise in the neutralized weight vector.
+    A rank-corr near 1.0 means the ordering is stable; dropping below ``threshold``
+    means enough names have re-ranked to justify the turnover cost of rebalancing.
+
+    Args:
+        threshold: Spearman rank-correlation cutoff in [-1, 1]. Default 0.7 means
+                   rebalance only when the signal rank ordering agrees less than 70%
+                   of the time between the current and proposed dates.
+    """
+    def trigger(current: pd.Series, proposed: pd.Series) -> bool:
+        # Drop NaN (ineligible) tickers — only compare where both are ranked
+        valid = current.notna() & proposed.notna()
+        if valid.sum() < 4:
+            return True
+        c = current[valid]
+        p = proposed[valid]
+        rank_corr = float(c.rank().corr(p.rank()))
+        return rank_corr < threshold
+
+    trigger.__name__ = f"rank_change_trigger(threshold={threshold})"
+    return trigger
+
+
+def book_overlap_trigger(
+    n: int = 20, min_overlap: float = 0.7
+) -> Callable[[pd.Series, pd.Series], bool]:
+    """Rebalance when the proposed top/bottom N names differ enough from the current book.
+
+    Compares the *set* of top-N and bottom-N tickers between the current and proposed
+    signal rows. If the Jaccard overlap (intersection / union) of the long set OR the
+    short set falls below ``min_overlap``, the trigger fires.
+
+    This is more robust than rank-correlation for concentrated books (e.g. 20L/20S out
+    of 150) because it directly asks "how many names would actually change?" rather than
+    measuring global rank shift across all eligible names.
+
+    Args:
+        n:           Number of names on each side of the book (must match build_long_short n_long/n_short).
+        min_overlap: Jaccard similarity threshold. 0.7 means rebalance when less than
+                     70% of the current long (or short) names would survive. Default 0.7.
+    """
+    def trigger(current: pd.Series, proposed: pd.Series) -> bool:
+        valid = current.notna() & proposed.notna()
+        if valid.sum() < n * 2:
+            return True
+        c = current[valid]
+        p = proposed[valid]
+        # Top-N = longs, Bottom-N = shorts
+        c_longs = set(c.nlargest(n).index)
+        c_shorts = set(c.nsmallest(n).index)
+        p_longs = set(p.nlargest(n).index)
+        p_shorts = set(p.nsmallest(n).index)
+        long_overlap = len(c_longs & p_longs) / len(c_longs | p_longs)
+        short_overlap = len(c_shorts & p_shorts) / len(c_shorts | p_shorts)
+        return long_overlap < min_overlap or short_overlap < min_overlap
+
+    trigger.__name__ = f"book_overlap_trigger(n={n}, min_overlap={min_overlap})"
+    return trigger
+
+
+def signal_zscore_trigger(
+    signal: pd.DataFrame,
+    threshold: float = 1.5,
+    window: int = 20,
+) -> Callable[[pd.Series, pd.Series], bool]:
+    """Rebalance when the cross-sectional signal z-score magnitude is large enough.
+
+    Uses a closure over the full signal DataFrame to compute a rolling cross-sectional
+    mean z-score at each date. High z-score = signal is extreme = worth paying turnover.
+    Low z-score = signal is weak = cheaper to hold current book.
+
+    Args:
+        signal:    The raw signal DataFrame (dates x tickers), same index as positions.
+        threshold: Z-score magnitude cutoff. Default 1.5.
+        window:    Rolling window for computing signal mean/std. Default 20.
+    """
+    rolling_mean = signal.rolling(window).mean()
+    rolling_std = signal.rolling(window).std().replace(0.0, np.nan)
+    zscores = (signal - rolling_mean) / rolling_std
+    mean_abs_z = zscores.abs().mean(axis=1)
+
+    def trigger(_current: pd.Series, proposed: pd.Series) -> bool:
+        # proposed.name is the date index label when iterating via .loc[date]
+        date = proposed.name
+        if date not in mean_abs_z.index:
+            return True
+        return float(mean_abs_z.loc[date]) >= threshold
+
+    trigger.__name__ = f"signal_zscore_trigger(threshold={threshold})"
+    return trigger
