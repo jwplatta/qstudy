@@ -99,6 +99,7 @@ def test_list_reports_top_level_versions_only(tmp_path: Path) -> None:
     alpha.mkdir()
     (alpha / "v0.py").write_text("", encoding="utf-8")
     (alpha / "v1.py").write_text("", encoding="utf-8")
+    (alpha / "v2_equal_sharpe.py").write_text("", encoding="utf-8")
     (alpha / "notes.txt").write_text("", encoding="utf-8")
     (alpha / "nested").mkdir()
     (alpha / "nested" / "v2.py").write_text("", encoding="utf-8")
@@ -107,18 +108,19 @@ def test_list_reports_top_level_versions_only(tmp_path: Path) -> None:
     beta.mkdir()
     (beta / "v10.py").write_text("", encoding="utf-8")
 
-    assert list_experiments(tmp_path) == [("alpha", 2), ("beta", 1)]
+    assert list_experiments(tmp_path) == [("alpha", 3), ("beta", 1)]
 
 
 def test_discover_version_files_orders_by_numeric_suffix(tmp_path: Path) -> None:
     experiment_dir = tmp_path / "alpha"
     experiment_dir.mkdir()
-    for name in ("v10.py", "v1.py", "v0.py"):
+    for name in ("v10.py", "v2_equal_sharpe.py", "v1.py", "v0.py"):
         (experiment_dir / name).write_text("def run_study():\n    return {}\n", encoding="utf-8")
 
     assert [path.name for path in discover_version_files(experiment_dir)] == [
         "v0.py",
         "v1.py",
+        "v2_equal_sharpe.py",
         "v10.py",
     ]
 
@@ -132,7 +134,7 @@ def test_run_experiment_writes_json_and_csv(tmp_path: Path) -> None:
         "    return {'sharpe': 1.0, 'ann_return': 0.12}\n",
         encoding="utf-8",
     )
-    (experiment_dir / "v1.py").write_text(
+    (experiment_dir / "v1_growth_tilt.py").write_text(
         "from shared import VALUE\n\n"
         "def run_study():\n"
         "    return {'sharpe': 2.0, 'ann_return': 0.34, 'nested': {'x': VALUE}}\n",
@@ -143,13 +145,13 @@ def test_run_experiment_writes_json_and_csv(tmp_path: Path) -> None:
 
     assert rows == [
         {"version": "v0", "sharpe": 1.0, "ann_return": 0.12},
-        {"version": "v1", "sharpe": 2.0, "ann_return": 0.34, "nested.x": 1},
+        {"version": "v1_growth_tilt", "sharpe": 2.0, "ann_return": 0.34, "nested.x": 1},
     ]
     assert read_results_rows(experiment_dir) == rows
 
     csv_text = (experiment_dir / "results.csv").read_text(encoding="utf-8")
     assert "version,sharpe,ann_return,nested.x" in csv_text
-    assert "v1,2.0,0.34,1.0" in csv_text
+    assert "v1_growth_tilt,2.0,0.34,1.0" in csv_text
 
 
 def test_generated_run_py_executes_versions(tmp_path: Path) -> None:

@@ -24,7 +24,7 @@ DEFAULT_RESULTS_COLUMNS = [
     "avg_daily_turnover",
 ]
 
-_STUDY_FILE_RE = re.compile(r"^v(\d+)\.py$")
+_STUDY_FILE_RE = re.compile(r"^v(\d+)(?:[^/]*)\.py$")
 
 
 class QStudyCliError(Exception):
@@ -166,15 +166,15 @@ def list_experiments(studies_root: Path) -> list[tuple[str, int]]:
 
 
 def discover_version_files(experiment_dir: Path) -> list[Path]:
-    versions: list[tuple[int, Path]] = []
+    versions: list[tuple[int, str, Path]] = []
     for child in experiment_dir.iterdir():
         if not child.is_file():
             continue
         match = _STUDY_FILE_RE.match(child.name)
         if match is None:
             continue
-        versions.append((int(match.group(1)), child))
-    return [path for _, path in sorted(versions, key=lambda item: item[0])]
+        versions.append((int(match.group(1)), child.name, child))
+    return [path for _, _, path in sorted(versions, key=lambda item: (item[0], item[1]))]
 
 
 def run_experiment(experiment_dir: Path) -> list[dict[str, Any]]:
