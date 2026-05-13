@@ -25,6 +25,9 @@ dependencies = [
     "tqdm>=4.67.3",
 ]
 
+[project.scripts]
+qstudy = "qstudy.cli:main"
+
 [dependency-groups]
 dev = [
     "mypy>=1.19.1",
