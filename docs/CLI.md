@@ -5,6 +5,7 @@ The `qstudy` CLI manages experiment folders for multi-version studies.
 Current commands:
 
 - `qstudy create <name>`
+- `qstudy iterate <study> <version-name>`
 - `qstudy list`
 - `qstudy show-results <name>`
 
@@ -25,6 +26,7 @@ Run the CLI with `uv run`:
 ```bash
 uv run qstudy list
 uv run qstudy create my-experiment
+uv run qstudy iterate my-experiment volume-confirmed
 uv run qstudy show-results my-experiment
 ```
 
@@ -81,6 +83,7 @@ Generated files:
 - `v0.py`
 - `run.py`
 - `shared.py`
+- `iteration_index.json`
 - `results.json`
 - `results.csv`
 - `log.md`
@@ -89,8 +92,33 @@ Generated files:
 Behavior:
 
 - fails if the experiment directory already exists
+- initializes `iteration_index.json` with the baseline `v0.py` entry
 - initializes `results.json` as an empty JSON array
 - initializes `results.csv` as an empty but valid CSV artifact
+
+## `qstudy iterate <study> <version-name>`
+
+Creates the next top-level version file by copying the highest existing version file.
+
+Example:
+
+```bash
+uv run qstudy iterate residual-mr volume-confirmed
+```
+
+If the highest existing version is `v0.py`, the command creates:
+
+```text
+v1_volume_confirmed.py
+```
+
+Behavior:
+
+- resolves `<study>` under the configured studies root
+- picks the highest existing numeric version file; if several files share that number, lexicographic filename order breaks the tie
+- normalizes `<version-name>` into a safe suffix like `volume_confirmed`
+- copies the source file and updates obvious embedded version labels when they directly reference the prior stem
+- appends metadata to `iteration_index.json`
 
 ## `qstudy list`
 
@@ -145,7 +173,8 @@ Typical flow:
 
 ```bash
 uv run qstudy create residual-mr
-cd residual-mr
+uv run qstudy iterate residual-mr volume-confirmed
+cd experiments/residual-mr
 python run.py
 uv run qstudy show-results residual-mr
 ```
@@ -154,7 +183,8 @@ What to edit:
 
 - `shared.py`: shared dates, benchmark, universe loader, and starter signal helpers
 - `v0.py`: baseline study with `run_study() -> dict`
-- future `v1.py`, `v2.py`, and so on: additional study versions
+- future `v*.py` files created by `qstudy iterate`
+- `iteration_index.json`: append-only lineage metadata for iterations
 
 What `run.py` does:
 
@@ -207,6 +237,13 @@ Example:
 
 - one row per version
 - same columns as `results.json`
+
+`iteration_index.json`:
+
+- JSON array of objects
+- one object per version file
+- stores the numeric version, filename, source filename, and normalized label
+- metadata only; `run.py` still uses `v*.py` discovery as the source of truth
 
 ---
 
