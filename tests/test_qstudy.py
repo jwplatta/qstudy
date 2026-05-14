@@ -1158,10 +1158,10 @@ class TestPortfolioStudy:
         assert (nonzero > 0).all()
         assert (nonzero <= 1.0 + 1e-10).all()
 
-    def test_renormalize_positions_opt_in(self):
-        """renormalize_positions() forces abs(w).sum(axis=1) == 1.0."""
+    def test_fully_invest_opt_in(self):
+        """fully_invest() forces abs(w).sum(axis=1) == 1.0."""
         portfolio, _, _ = self._make_portfolio()
-        portfolio.renormalize_positions().run()
+        portfolio.fully_invest().run()
         positions = portfolio.cache["positions"]
         abs_sum = positions.abs().sum(axis=1)
         nonzero = abs_sum[abs_sum > 0]

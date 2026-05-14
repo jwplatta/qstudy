@@ -927,6 +927,21 @@ class Study:
         self._steps.append(("position_scaler", "weight", apply_equal))
         return self
 
+    def fully_invest(self) -> Study:
+        """Rescale positions so abs(weights).sum(axis=1) == 1.0 on each date.
+
+        Useful after a custom position builder or scaler that may leave the book
+        under- or over-invested. No-op on rows where the abs sum is already zero.
+        """
+        from qstudy.study.portfolio import normalize_weights
+
+        def _fully_invest(positions, **cache):
+            return normalize_weights(positions)
+
+        _fully_invest.__name__ = "fully_invest"
+        self._steps.append(("position_scaler", "scale_risk", _fully_invest))
+        return self
+
     # ------------------------------------------------------------------
     # Execution
     # ------------------------------------------------------------------
@@ -1384,7 +1399,4 @@ class Study:
         steps = [s[0] for s in self._steps]
         ran = self._cache.get("portfolio_returns") is not None
         weighting = any(s[1] == "weight" for s in self._steps)
-        return (
-            f"Study(name={self._name!r}, steps={steps}, "
-            f"weighting={weighting}, ran={ran})"
-        )
+        return f"Study(name={self._name!r}, steps={steps}, weighting={weighting}, ran={ran})"

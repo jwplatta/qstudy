@@ -129,8 +129,8 @@ class PortfolioStudy:
     # Portfolio-level weighting (how to weight strategy sleeves)
     # ------------------------------------------------------------------
 
-    def renormalize_positions(self) -> PortfolioStudy:
-        """Renormalize combined portfolio positions so abs(weights).sum() == 1.0 each day.
+    def fully_invest(self) -> PortfolioStudy:
+        """Rescale combined portfolio positions so abs(weights).sum() == 1.0 each day.
 
         Off by default. Call this when you want the combined book to be fully invested
         rather than preserving the dollar exposure implied by the sleeve weights.
