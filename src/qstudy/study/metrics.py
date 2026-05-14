@@ -1,5 +1,30 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+
 import numpy as np
 import pandas as pd
+
+
+@dataclass
+class StudyMetrics:
+    """Performance metrics for a Study or PortfolioStudy.
+
+    Accessible via ``study.metrics.sharpe_ratio`` etc.
+    """
+
+    sharpe_ratio: float
+    ann_return: float
+    ann_vol: float
+    max_drawdown: float
+    drawdown_duration: int
+    avg_daily_turnover: float | None
+    benchmark_sharpe: float | None
+    benchmark_corr: float | None
+    information_ratio: float | None
+    gross_ann_return: float | None = None
+    cost_drag_ann: float | None = None
+    cost_bps: float | None = None
 
 
 def sharpe(returns: pd.Series, periods_per_year: int = 252) -> float:
@@ -104,16 +129,24 @@ def summary(
     positions: pd.DataFrame | None = None,
     benchmark: pd.Series | None = None,
     periods_per_year: int = 252,
+    gross_returns: pd.Series | None = None,
+    cost_bps: float = 0.0,
 ) -> pd.Series:
     """Compute standard performance metrics.
 
     Returns a named Series with keys:
       sharpe, ann_return, ann_vol, max_drawdown, max_drawdown_duration,
       [max_drawdown_start, max_drawdown_end], [avg_daily_turnover],
-      [benchmark_ann_return, benchmark_corr, information_ratio]
+      [benchmark_ann_return, benchmark_corr, information_ratio],
+      [gross_sharpe, gross_ann_return, net_sharpe, cost_drag_ann, cost_bps]
+        (last group only present when gross_returns is provided)
+
+    When ``gross_returns`` is provided, ``returns`` is treated as the net (post-cost)
+    series and ``sharpe`` / ``ann_return`` reflect net performance.
+    ``gross_sharpe`` and ``gross_ann_return`` expose pre-cost figures.
     """
     dur, date_range = max_drawdown_duration(returns)
-    metrics: dict = {
+    result: dict = {
         "sharpe": sharpe(returns, periods_per_year),
         "ann_return": annualized_return(returns, periods_per_year),
         "ann_vol": annualized_vol(returns, periods_per_year),
@@ -121,15 +154,24 @@ def summary(
         "max_drawdown_duration": dur,
     }
     if date_range is not None:
-        metrics["max_drawdown_start"] = date_range[0]
-        metrics["max_drawdown_end"] = date_range[1]
+        result["max_drawdown_start"] = date_range[0]
+        result["max_drawdown_end"] = date_range[1]
     if positions is not None:
-        metrics["avg_daily_turnover"] = turnover(positions).mean()
+        result["avg_daily_turnover"] = turnover(positions).mean()
 
     if benchmark is not None:
         bm = benchmark.squeeze().reindex(returns.index).fillna(0)
-        metrics["benchmark_ann_return"] = annualized_return(bm, periods_per_year)
-        metrics["benchmark_sharpe"] = sharpe(bm, periods_per_year)
-        metrics["benchmark_corr"] = returns.corr(bm)
-        metrics["information_ratio"] = information_ratio(returns, bm, periods_per_year)
-    return pd.Series(metrics)
+        result["benchmark_ann_return"] = annualized_return(bm, periods_per_year)
+        result["benchmark_sharpe"] = sharpe(bm, periods_per_year)
+        result["benchmark_corr"] = returns.corr(bm)
+        result["information_ratio"] = information_ratio(returns, bm, periods_per_year)
+
+    if gross_returns is not None:
+        avg_to = result.get("avg_daily_turnover", float("nan"))
+        result["gross_sharpe"] = sharpe(gross_returns, periods_per_year)
+        result["gross_ann_return"] = annualized_return(gross_returns, periods_per_year)
+        result["net_sharpe"] = result["sharpe"]
+        result["cost_drag_ann"] = avg_to * (cost_bps / 10_000) * periods_per_year
+        result["cost_bps"] = cost_bps
+
+    return pd.Series(result)
