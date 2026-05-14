@@ -97,7 +97,7 @@ From your main repository clone:
 
 ## Commit Rules
 
-Commit messages should be concise and clear.
+Use conventional commits. No attributions. Commit messages should be concise and clear.
 
 - Keep the subject line short (one line).
 - Start the message with a verb that describes the action taken.

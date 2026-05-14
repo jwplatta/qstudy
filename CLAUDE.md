@@ -12,6 +12,33 @@ skillex pull <skill-name> --agent claude      # install a skill
 skillex update <skill-name> --agent claude    # update an installed skill
 ```
 
+## Contributing workflow
+
+**Never commit directly to main.** All changes go through a worktree + PR:
+
+```bash
+git fetch origin
+git worktree add ../<worktree-name> -b <branch-name> origin/main
+cd ../<worktree-name>
+uv sync
+# ... make changes ...
+uv run ruff format . && uv run ruff check --fix . && uv run pytest
+git add <files>
+git commit -m "verb: short description"
+git push -u origin HEAD
+gh pr create --base main --fill
+```
+
+Branch prefixes: `feature/*`, `fix/*`, `chore/*`
+
+Commit style: conventional, no co-author attribution, subject line only (e.g. `fix(Study): correct __repr__`).
+
+After PR is merged:
+```bash
+git worktree remove ../<worktree-name>
+git branch -d <branch-name>
+```
+
 ## Commands
 
 ```bash
