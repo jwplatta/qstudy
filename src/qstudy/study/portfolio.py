@@ -93,6 +93,46 @@ def liquidity_filter(
     return rank <= top_n
 
 
+# ---------------------------------------------------------------------------
+# Weight construction utilities (for use with build_positions custom builders)
+# ---------------------------------------------------------------------------
+
+
+def demean_weights(weights: pd.DataFrame) -> pd.DataFrame:
+    """Subtract the cross-sectional mean from each row to achieve dollar neutrality.
+
+    Use this inside a custom ``build_positions`` function after computing raw signal-
+    proportional weights. The result will have rows that sum to zero (long == short in
+    dollar terms). Follow with :func:`normalize_weights` to produce a fully-invested book.
+
+    Not appropriate for long-only builders — demeaning introduces negative weights.
+
+    Args:
+        weights: Raw weight DataFrame (dates x tickers).
+
+    Returns:
+        Demeaned weights, same shape.
+    """
+    return weights.sub(weights.mean(axis=1), axis=0)
+
+
+def normalize_weights(weights: pd.DataFrame) -> pd.DataFrame:
+    """Normalize weights so abs(weights).sum(axis=1) == 1.0 on each date.
+
+    Use this as the final step inside a custom ``build_positions`` function to ensure
+    the portfolio is fully invested. Works for both long/short (dollar-neutral after
+    :func:`demean_weights`) and long-only portfolios.
+
+    Args:
+        weights: Weight DataFrame (dates x tickers).
+
+    Returns:
+        Normalized weights, same shape. Rows with zero total weight are left as zero.
+    """
+    abs_sum = weights.abs().sum(axis=1).replace(0, float("nan"))
+    return weights.div(abs_sum, axis=0)
+
+
 def build_long_short_positions(
     signal: pd.DataFrame,
     n_long: int = 25,
