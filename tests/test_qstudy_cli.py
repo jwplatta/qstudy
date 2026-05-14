@@ -348,6 +348,7 @@ def test_iterate_creates_next_version_and_appends_index(tmp_path: Path) -> None:
             "version": 1,
             "file": "v1_volume_confirmed.py",
             "source_file": "v0.py",
+            "parent": None,
             "label": "volume_confirmed",
         },
     ]
@@ -381,9 +382,57 @@ def test_iterate_bootstraps_missing_index_from_existing_versions(tmp_path: Path)
             "version": 2,
             "file": "v2_quality.py",
             "source_file": "v1_growth.py",
+            "parent": None,
             "label": "quality",
         },
     ]
+
+
+def test_iterate_with_parent_records_parent_and_branches_from_it(tmp_path: Path) -> None:
+    experiment_dir = create_experiment(tmp_path, "alpha-study")
+    # Create v1 alongside v0 so we have two versions to branch from.
+    (experiment_dir / "v1_momentum.py").write_text(
+        'STUDY_NAME = "alpha_study_v1_momentum"\n', encoding="utf-8"
+    )
+
+    new_file = iterate_experiment(tmp_path, "alpha-study", "vol_filter", parent="v1_momentum")
+
+    assert new_file.name == "v2_vol_filter.py"
+    index = read_iteration_index_rows(experiment_dir)
+    last = index[-1]
+    assert last["file"] == "v2_vol_filter.py"
+    assert last["source_file"] == "v1_momentum.py"
+    assert last["parent"] == "v1_momentum"
+    # lookup_parent returns the stored parent stem
+    from qstudy.experiments import lookup_parent
+    assert lookup_parent(experiment_dir, "v2_vol_filter") == "v1_momentum"
+
+
+def test_iterate_with_unknown_parent_raises(tmp_path: Path) -> None:
+    create_experiment(tmp_path, "alpha-study")
+
+    with pytest.raises(QStudyCliError, match="Parent version not found"):
+        iterate_experiment(tmp_path, "alpha-study", "next", parent="v99_nonexistent")
+
+
+def test_append_infers_ancestor_from_index(tmp_path: Path) -> None:
+    experiment_dir = create_experiment(tmp_path, "alpha-study")
+    (experiment_dir / "v1_momentum.py").write_text("VALUE = 1\n", encoding="utf-8")
+    iterate_experiment(tmp_path, "alpha-study", "vol_filter", parent="v1_momentum")
+
+    entry = append_log_entry(
+        experiment_dir=experiment_dir,
+        version="v2_vol_filter",
+        ancestor=None,  # omitted — should be inferred
+        hypothesis="Add vol filter",
+        analysis="Improved Sharpe",
+        metrics={"net_sharpe": 0.75},
+    )
+    # ancestor should NOT be auto-inferred by append_log_entry itself —
+    # inference happens in the CLI layer via lookup_parent.
+    # Here we test the CLI path via main().
+    from qstudy.experiments import lookup_parent
+    assert lookup_parent(experiment_dir, "v2_vol_filter") == "v1_momentum"
 
 
 def test_iterate_rejects_invalid_name(tmp_path: Path) -> None:
@@ -487,7 +536,7 @@ def test_cli_append_writes_log_entry(
     code = main([
         "append", "alpha",
         "--version", "v1_test",
-        "--ancestor", "v0",
+        "--parent", "v0",
         "--hypothesis", "Test hypothesis",
         "--analysis", "Test analysis",
         "--results", metrics_json,

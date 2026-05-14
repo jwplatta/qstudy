@@ -14,6 +14,7 @@ from qstudy.experiments import (
     iterate_experiment,
     list_experiments,
     load_studies_config,
+    lookup_parent,
     read_log_entries,
     render_experiment_list,
     render_results_table,
@@ -31,6 +32,11 @@ def build_parser() -> argparse.ArgumentParser:
     iterate_parser = subparsers.add_parser("iterate", help="Create the next study version file")
     iterate_parser.add_argument("study", help="Experiment name")
     iterate_parser.add_argument("version_name", help="Name for the new version suffix")
+    iterate_parser.add_argument(
+        "--parent",
+        default=None,
+        help="Version stem to branch from (default: latest version)",
+    )
 
     run_parser = subparsers.add_parser("run", help="Run study versions in an experiment")
     run_parser.add_argument("name", help="Experiment name")
@@ -62,9 +68,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Metrics JSON string (output of run_study())",
     )
     append_parser.add_argument(
-        "--ancestor",
+        "--parent",
         default=None,
-        help="Parent version stem this iteration branched from (optional)",
+        help="Parent version stem (optional; inferred from iteration index if omitted)",
     )
 
     return parser
@@ -83,7 +89,9 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "iterate":
-            version_file = iterate_experiment(config.studies_root, args.study, args.version_name)
+            version_file = iterate_experiment(
+                config.studies_root, args.study, args.version_name, parent=args.parent
+            )
             print(f"Created iteration at {version_file}")
             return 0
 
@@ -123,15 +131,17 @@ def main(argv: list[str] | None = None) -> int:
             if not isinstance(metrics, dict):
                 raise QStudyCliError("--results must be a JSON object")
 
+            ancestor = args.parent or lookup_parent(experiment_dir, args.version)
             entry = append_log_entry(
                 experiment_dir=experiment_dir,
                 version=args.version,
-                ancestor=args.ancestor,
+                ancestor=ancestor,
                 hypothesis=args.hypothesis,
                 analysis=args.analysis,
                 metrics=metrics,
             )
-            print(f"Appended entry for {entry.version} to log.json")
+            ancestor_note = f" (parent: {entry.ancestor})" if entry.ancestor else ""
+            print(f"Appended entry for {entry.version}{ancestor_note} to log.json")
             return 0
 
         parser.error(f"Unknown command: {args.command}")
