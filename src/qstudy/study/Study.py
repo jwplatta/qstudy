@@ -14,6 +14,7 @@ from tqdm import tqdm
 import qstudy.study.engine as engine
 import qstudy.study.metrics as metrics
 from qstudy.data.loader import StudyData
+from qstudy.signals import transforms
 from qstudy.signals.factors import BarraLiteFactorModel, residualize
 from qstudy.signals.filters import (
     momentum_context_filter,
@@ -31,12 +32,7 @@ from qstudy.study.portfolio import (
     rebalance,
     rebalance_on,
 )
-from qstudy.study.weighting import (
-    apply_equal,
-    apply_equal_sharpe,
-    apply_equal_vol,
-    apply_optimal,
-)
+from qstudy.study.weighting import apply_equal
 
 
 class Study:
@@ -332,6 +328,119 @@ class Study:
             fn: ``fn(signal, **cache) -> pd.DataFrame``. Same shape, different geometry.
         """
         self._append_signal_filter(fn, label=getattr(fn, "__name__", "transform_signal"))
+        return self
+
+    def winsorize(self, lower: float = 0.05, upper: float = 0.95) -> Study:
+        """Clip cross-sectional outliers to percentile bounds on each date.
+
+        Args:
+            lower: Lower percentile bound (e.g. 0.05 = 5th percentile).
+            upper: Upper percentile bound (e.g. 0.95 = 95th percentile).
+        """
+
+        def fn(signal, **cache):
+            return transforms.winsorize(signal, lower=lower, upper=upper)
+
+        fn.__name__ = f"winsorize(lower={lower}, upper={upper})"
+        self._append_signal_filter(fn, label=fn.__name__)
+        return self
+
+    def truncate(self, lower: float = 0.05, upper: float = 0.95) -> Study:
+        """Remove cross-sectional outliers by NaN-ing values outside percentile bounds.
+
+        Args:
+            lower: Lower percentile bound — values below become NaN.
+            upper: Upper percentile bound — values above become NaN.
+        """
+
+        def fn(signal, **cache):
+            return transforms.truncate(signal, lower=lower, upper=upper)
+
+        fn.__name__ = f"truncate(lower={lower}, upper={upper})"
+        self._append_signal_filter(fn, label=fn.__name__)
+        return self
+
+    def rank_transform(self) -> Study:
+        """Rank signal cross-sectionally and normalize to [0, 1] on each date.
+
+        Produces a uniform distribution. Use to remove distributional shape,
+        fix skew, or when the precise signal value has no meaning beyond order.
+        """
+
+        def fn(signal, **cache):
+            return transforms.rank_transform(signal)
+
+        fn.__name__ = "rank_transform"
+        self._append_signal_filter(fn, label=fn.__name__)
+        return self
+
+    def rank_threshold(self, tail: float = 0.20) -> Study:
+        """Rank cross-sectionally then zero out the middle, keeping only the tails.
+
+        Args:
+            tail: Fraction to keep on each end. Default 0.20 keeps top/bottom 20%.
+        """
+
+        def fn(signal, **cache):
+            return transforms.rank_threshold(signal, tail=tail)
+
+        fn.__name__ = f"rank_threshold(tail={tail})"
+        self._append_signal_filter(fn, label=fn.__name__)
+        return self
+
+    def inverse_cdf(self) -> Study:
+        """Map signal to standard normal quantiles via the inverse CDF on each date.
+
+        Produces a normal distribution with heavier tails than rank_transform.
+        """
+
+        def fn(signal, **cache):
+            return transforms.inverse_cdf(signal)
+
+        fn.__name__ = "inverse_cdf"
+        self._append_signal_filter(fn, label=fn.__name__)
+        return self
+
+    def tanh_scale(self, scale: float = 1.0) -> Study:
+        """Soft-clip the signal to (-1, 1) using tanh on each date.
+
+        Args:
+            scale: Controls the inflection point. Smaller scale = more compression.
+        """
+
+        def fn(signal, **cache):
+            return transforms.tanh_scale(signal, scale=scale)
+
+        fn.__name__ = f"tanh_scale(scale={scale})"
+        self._append_signal_filter(fn, label=fn.__name__)
+        return self
+
+    def zscore_signal(self) -> Study:
+        """Cross-sectional z-score the signal on each date.
+
+        Subtracts the cross-sectional mean and divides by std. Use to normalize
+        signal scale before position building.
+        """
+
+        def fn(signal, **cache):
+            return transforms.zscore(signal)
+
+        fn.__name__ = "zscore_signal"
+        self._append_signal_filter(fn, label=fn.__name__)
+        return self
+
+    def demean_signal(self) -> Study:
+        """Subtract the cross-sectional mean from the signal on each date.
+
+        Shifts signal rows to sum to approximately zero. First step toward
+        dollar neutrality when building proportional-weight positions.
+        """
+
+        def fn(signal, **cache):
+            return transforms.demean(signal)
+
+        fn.__name__ = "demean_signal"
+        self._append_signal_filter(fn, label=fn.__name__)
         return self
 
     def filter_signal(self, fn: Callable) -> Study:
@@ -648,7 +757,7 @@ class Study:
         self._steps.append(("position_scaler", "rebalance", fn))
         return self
 
-    def rebalance_on(self, trigger_fn: Callable) -> "Study":
+    def rebalance_on(self, trigger_fn: Callable) -> Study:
         """Threshold-triggered rebalance: only adopt new positions when trigger fires.
 
         On each date, ``trigger_fn(current_positions, proposed_positions)`` is called.
@@ -809,50 +918,13 @@ class Study:
     # ------------------------------------------------------------------
 
     def weight_equal(self) -> Study:
-        """Equal dollar weights (default -- no-op, positions already normalized)."""
-        self._set_weighting(apply_equal, label="weight_equal")
-        return self
+        """Equal dollar weights (default — no-op, positions are already normalized).
 
-    def weight_equal_vol(self, vol_window: int = 60) -> Study:
-        """Scale positions inversely proportional to realized volatility.
-
-        Args:
-            vol_window: Lookback for realized vol calculation.
+        This is the default behavior. Weighting schemes for combining multiple
+        strategies (equal-vol, equal-Sharpe, mean-variance optimal) are available
+        on :class:`~qstudy.study.PortfolioStudy`.
         """
-
-        def fn(positions, **cache):
-            return apply_equal_vol(positions, vol_window=vol_window, **cache)
-
-        self._set_weighting(fn, label=f"weight_equal_vol(window={vol_window})")
-        return self
-
-    def weight_equal_sharpe(self, window: int = 126) -> Study:
-        """Scale positions by rolling absolute Sharpe ratio.
-
-        Args:
-            window: Lookback for rolling Sharpe calculation.
-        """
-
-        def fn(positions, **cache):
-            return apply_equal_sharpe(positions, window=window, **cache)
-
-        self._set_weighting(fn, label=f"weight_equal_sharpe(window={window})")
-        return self
-
-    def weight_optimal(self, window: int = 126, gamma: float = 1.0) -> Study:
-        """Rolling mean-variance optimal weights (ridge-regularized).
-
-        Note: runs a per-date optimization loop and may be slow for large universes.
-
-        Args:
-            window: Rolling lookback in trading days.
-            gamma:  Ridge regularization multiplier.
-        """
-
-        def fn(positions, **cache):
-            return apply_optimal(positions, window=window, gamma=gamma, **cache)
-
-        self._set_weighting(fn, label=f"weight_optimal(window={window}, gamma={gamma})")
+        self._steps.append(("position_scaler", "weight", apply_equal))
         return self
 
     # ------------------------------------------------------------------
@@ -1157,14 +1229,6 @@ class Study:
                 self._steps.pop(i)
         self._steps.append(("position_builder", "", fn))
 
-    def _set_weighting(self, fn: Callable, label: str) -> None:
-        existing = [i for i, s in enumerate(self._steps) if s[1] == "weight"]
-        if existing:
-            warnings.warn(f"Replacing existing weighting scheme with '{label}'.", stacklevel=3)
-            for i in reversed(existing):
-                self._steps.pop(i)
-        self._steps.append(("position_scaler", "weight", fn))
-
     def _validate_pipeline(self) -> None:
         if not self._data_injected:
             raise RuntimeError(
@@ -1199,8 +1263,10 @@ class Study:
             )
         if builder_idx < base_idx:
             raise RuntimeError("Position builder cannot appear before the base signal.")
-        # Canonical position-scaler order: weight → scale_risk → neutralize → rebalance
-        _SCALER_PRIORITY = {"weight": 1, "scale_risk": 2, "neutralize": 3, "rebalance": 4}
+        # Canonical position-scaler order: weight → neutralize → scale_risk → rebalance
+        # neutralize runs before scale_risk so factor constraints are applied to raw weights;
+        # scale_risk then applies a scalar vol multiplier without disturbing neutrality.
+        _SCALER_PRIORITY = {"weight": 1, "neutralize": 2, "scale_risk": 3, "rebalance": 4}
         last_priority = 0
         for major_type, minor_type, fn in self._steps:
             if major_type == "position_scaler":
@@ -1209,7 +1275,7 @@ class Study:
                     raise ValueError(
                         f"'{fn.__name__}' (type '{minor_type}') declared after a "
                         f"higher-priority step (priority {last_priority}). "
-                        f"Canonical order: weight → scale_risk → neutralize → rebalance."
+                        f"Canonical order: weight → neutralize → scale_risk → rebalance."
                     )
                 last_priority = p
 

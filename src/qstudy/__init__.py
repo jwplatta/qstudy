@@ -14,6 +14,16 @@ from qstudy.signals.filters import (
     vol_filter,
     volume_zscore_filter,
 )
+from qstudy.signals.transforms import (
+    demean,
+    inverse_cdf,
+    rank_threshold,
+    rank_transform,
+    tanh_scale,
+    truncate,
+    winsorize,
+    zscore,
+)
 from qstudy.study import metrics
 from qstudy.study.engine import run
 from qstudy.study.grid import param_grid
@@ -41,11 +51,21 @@ __all__ = [
     "download",
     "StudyData",
     "get_sector_map",
-    # signals / factors
+    # signal filters
     "vol_filter",
     "volume_zscore_filter",
     "momentum_context_filter",
     "vix_contango_filter",
+    # signal transforms
+    "winsorize",
+    "truncate",
+    "rank_transform",
+    "rank_threshold",
+    "inverse_cdf",
+    "tanh_scale",
+    "zscore",
+    "demean",
+    # factors
     "residualize",
     "BarraLiteFactorModel",
     "cross_sectional_residualize",
