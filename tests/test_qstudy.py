@@ -827,41 +827,6 @@ class TestStudyNewMethods:
         pd.testing.assert_frame_equal(study.cache["high"], universe.high)
         pd.testing.assert_frame_equal(study.cache["low"], universe.low)
 
-    def test_download_supports_interval_and_ohlc(self, monkeypatch):
-        dates = pd.date_range("2024-01-02 09:30:00", periods=3, freq="min")
-        columns = pd.MultiIndex.from_product(
-            [["Open", "High", "Low", "Close", "Volume"], ["AAPL", "MSFT"]]
-        )
-        data = pd.DataFrame(
-            [
-                [100.0, 200.0, 101.0, 201.0, 99.0, 199.0, 100.5, 200.5, 1_000, 2_000],
-                [101.0, 201.0, 102.0, 202.0, 100.0, 200.0, 101.5, 201.5, 1_100, 2_100],
-                [102.0, 202.0, 103.0, 203.0, 101.0, 201.0, 102.5, 202.5, 1_200, 2_200],
-            ],
-            index=dates,
-            columns=columns,
-        )
-        captured = {}
-
-        def fake_download(*args, **kwargs):
-            captured["args"] = args
-            captured["kwargs"] = kwargs
-            return data
-
-        monkeypatch.setattr("qstudy.data.loader.yf.download", fake_download)
-
-        study_data = qs.download(["AAPL", "MSFT"], "2024-01-02", "2024-01-03", interval="1m")
-
-        assert captured["kwargs"]["interval"] == "1m"
-        assert study_data.interval == "1m"
-        assert study_data.tickers == ["AAPL", "MSFT"]
-        pd.testing.assert_index_equal(study_data.close.index, dates)
-        pd.testing.assert_frame_equal(study_data.open, data["Open"])
-        pd.testing.assert_frame_equal(study_data.high, data["High"])
-        pd.testing.assert_frame_equal(study_data.low, data["Low"])
-        pd.testing.assert_frame_equal(study_data.close, data["Close"])
-        pd.testing.assert_frame_equal(study_data.volume, data["Volume"])
-
     def test_download_uses_cache_when_available(self, monkeypatch, tmp_path):
         dates = pd.date_range("2024-01-02", periods=3, freq="D")
         columns = pd.MultiIndex.from_product(

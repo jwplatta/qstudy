@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import csv
 import json
 import os
 import subprocess
@@ -13,14 +12,17 @@ from qstudy.cli import main
 from qstudy.experiments import (
     CONFIG_FILENAME,
     ITERATION_INDEX_FILENAME,
+    LOG_FILENAME,
+    OUT_DIRNAME,
     QStudyCliError,
+    append_log_entry,
     create_experiment,
     discover_version_files,
     iterate_experiment,
     list_experiments,
     load_studies_config,
     read_iteration_index_rows,
-    read_results_rows,
+    read_log_entries,
     render_results_table,
     run_experiment,
     sanitize_version_name,
@@ -73,7 +75,7 @@ def test_load_studies_config_falls_back_to_cwd(tmp_path: Path) -> None:
     assert config.data_root is None
 
 
-def test_create_generates_expected_scaffold_and_empty_results(tmp_path: Path) -> None:
+def test_create_generates_expected_scaffold_and_empty_log(tmp_path: Path) -> None:
     experiment_dir = create_experiment(tmp_path, "alpha-study")
 
     expected = {
@@ -81,20 +83,14 @@ def test_create_generates_expected_scaffold_and_empty_results(tmp_path: Path) ->
         "v0.py",
         "run.py",
         "shared.py",
-        "results.json",
-        "results.csv",
-        "log.md",
+        "log.json",
         "readme.md",
     }
     assert expected == {path.name for path in experiment_dir.iterdir()}
-    assert json.loads((experiment_dir / "results.json").read_text(encoding="utf-8")) == []
+    assert json.loads((experiment_dir / LOG_FILENAME).read_text(encoding="utf-8")) == []
     assert json.loads((experiment_dir / ITERATION_INDEX_FILENAME).read_text(encoding="utf-8")) == [
         {"version": 0, "file": "v0.py", "source_file": None, "label": None}
     ]
-
-    with (experiment_dir / "results.csv").open(newline="", encoding="utf-8") as handle:
-        rows = list(csv.reader(handle))
-    assert rows == [["version"]]
 
 
 def test_load_studies_config_rejects_invalid_config(tmp_path: Path) -> None:
@@ -154,7 +150,7 @@ def test_discover_version_files_orders_by_numeric_suffix(tmp_path: Path) -> None
     ]
 
 
-def test_run_experiment_writes_json_and_csv(tmp_path: Path) -> None:
+def test_run_experiment_writes_out_artifacts(tmp_path: Path) -> None:
     experiment_dir = tmp_path / "alpha"
     experiment_dir.mkdir()
     (experiment_dir / "shared.py").write_text("VALUE = 1\n", encoding="utf-8")
@@ -166,45 +162,56 @@ def test_run_experiment_writes_json_and_csv(tmp_path: Path) -> None:
     (experiment_dir / "v1_growth_tilt.py").write_text(
         "from shared import VALUE\n\n"
         "def run_study():\n"
-        "    return {'sharpe': 2.0, 'ann_return': 0.34, 'nested': {'x': VALUE}}\n",
+        "    return {'sharpe': 2.0, 'ann_return': 0.34}\n",
         encoding="utf-8",
     )
 
     rows = run_experiment(experiment_dir)
 
-    assert rows == [
-        {"version": "v0", "sharpe": 1.0, "ann_return": 0.12},
-        {"version": "v1_growth_tilt", "sharpe": 2.0, "ann_return": 0.34, "nested.x": 1},
-    ]
-    assert read_results_rows(experiment_dir) == rows
+    # Returns rows with version, run_at, metrics
+    assert len(rows) == 2
+    assert rows[0]["version"] == "v0"
+    assert rows[0]["metrics"] == {"sharpe": 1.0, "ann_return": 0.12}
+    assert rows[1]["version"] == "v1_growth_tilt"
+    assert rows[1]["metrics"] == {"sharpe": 2.0, "ann_return": 0.34}
+    assert "run_at" in rows[0]
 
-    csv_text = (experiment_dir / "results.csv").read_text(encoding="utf-8")
-    assert "version,sharpe,ann_return,nested.x" in csv_text
-    assert "v1_growth_tilt,2.0,0.34,1.0" in csv_text
+    # out/ directory written
+    out_dir = experiment_dir / OUT_DIRNAME
+    assert out_dir.is_dir()
+    out_files = list(out_dir.iterdir())
+    assert len(out_files) == 2
+    # Each file contains version + run_at + metrics
+    for f in out_files:
+        payload = json.loads(f.read_text(encoding="utf-8"))
+        assert "version" in payload
+        assert "run_at" in payload
+        assert "metrics" in payload
 
 
-def test_run_experiment_can_filter_to_single_version_and_overwrite_results(tmp_path: Path) -> None:
+def test_run_experiment_can_filter_to_single_version(tmp_path: Path) -> None:
     experiment_dir = tmp_path / "alpha"
     experiment_dir.mkdir()
-    (experiment_dir / "shared.py").write_text("VALUE = 1\n", encoding="utf-8")
     (experiment_dir / "v0.py").write_text(
         "def run_study():\n"
-        "    return {'sharpe': 1.0, 'ann_return': 0.12}\n",
+        "    return {'sharpe': 1.0}\n",
         encoding="utf-8",
     )
     (experiment_dir / "v1_growth_tilt.py").write_text(
         "def run_study():\n"
-        "    return {'sharpe': 2.0, 'ann_return': 0.34}\n",
+        "    return {'sharpe': 2.0}\n",
         encoding="utf-8",
     )
 
     rows = run_experiment(experiment_dir, version="v1_growth_tilt")
 
-    assert rows == [{"version": "v1_growth_tilt", "sharpe": 2.0, "ann_return": 0.34}]
-    assert read_results_rows(experiment_dir) == rows
-    csv_text = (experiment_dir / "results.csv").read_text(encoding="utf-8")
-    assert "v1_growth_tilt,2.0,0.34" in csv_text
-    assert "v0,1.0,0.12" not in csv_text
+    assert len(rows) == 1
+    assert rows[0]["version"] == "v1_growth_tilt"
+    assert rows[0]["metrics"] == {"sharpe": 2.0}
+
+    out_dir = experiment_dir / OUT_DIRNAME
+    out_files = list(out_dir.iterdir())
+    assert len(out_files) == 1
 
 
 def test_run_experiment_reports_missing_selected_version(tmp_path: Path) -> None:
@@ -214,6 +221,76 @@ def test_run_experiment_reports_missing_selected_version(tmp_path: Path) -> None
 
     with pytest.raises(QStudyCliError, match="Study version not found"):
         run_experiment(experiment_dir, version="v9")
+
+
+def test_append_log_entry_creates_and_appends(tmp_path: Path) -> None:
+    experiment_dir = tmp_path / "alpha"
+    experiment_dir.mkdir()
+    (experiment_dir / LOG_FILENAME).write_text("[]\n", encoding="utf-8")
+
+    append_log_entry(
+        experiment_dir=experiment_dir,
+        version="v1_test",
+        ancestor="v0",
+        hypothesis="Test hypothesis",
+        analysis="Test analysis",
+        metrics={"net_sharpe": 0.68, "ann_return": 0.07},
+    )
+
+    entries = read_log_entries(experiment_dir)
+    assert len(entries) == 1
+    assert entries[0]["version"] == "v1_test"
+    assert entries[0]["ancestor"] == "v0"
+    assert entries[0]["hypothesis"] == "Test hypothesis"
+    assert entries[0]["analysis"] == "Test analysis"
+    assert entries[0]["metrics"]["net_sharpe"] == 0.68
+    assert "run_at" in entries[0]
+
+    # Append a second entry
+    append_log_entry(
+        experiment_dir=experiment_dir,
+        version="v2_test",
+        ancestor="v1_test",
+        hypothesis="Second hypothesis",
+        analysis="Second analysis",
+        metrics={"net_sharpe": 0.75},
+    )
+    entries = read_log_entries(experiment_dir)
+    assert len(entries) == 2
+    assert entries[1]["version"] == "v2_test"
+
+
+def test_read_log_entries_returns_empty_when_file_missing(tmp_path: Path) -> None:
+    experiment_dir = tmp_path / "alpha"
+    experiment_dir.mkdir()
+
+    assert read_log_entries(experiment_dir) == []
+
+
+def test_read_log_entries_raises_on_malformed_json(tmp_path: Path) -> None:
+    experiment_dir = tmp_path / "alpha"
+    experiment_dir.mkdir()
+    (experiment_dir / LOG_FILENAME).write_text("{bad json", encoding="utf-8")
+
+    with pytest.raises(QStudyCliError, match="Malformed log JSON"):
+        read_log_entries(experiment_dir)
+
+
+def test_render_results_table_uses_nested_metrics(tmp_path: Path) -> None:
+    entries = [
+        {
+            "version": "v0",
+            "ancestor": None,
+            "metrics": {"net_sharpe": 0.68, "ann_return": 0.07},
+        }
+    ]
+    table = render_results_table(entries)
+    assert "version" in table
+    assert "v0" in table
+
+
+def test_render_results_table_empty() -> None:
+    assert render_results_table([]) == "No results have been recorded yet."
 
 
 def test_generated_run_py_executes_versions(tmp_path: Path) -> None:
@@ -236,10 +313,11 @@ def test_generated_run_py_executes_versions(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0
-    assert "Ran 1 study version(s)." in result.stdout
-    assert read_results_rows(experiment_dir) == [
-        {"version": "v0", "sharpe": 1.23, "ann_return": 0.45}
-    ]
+    # out/ artifact written
+    out_files = list((experiment_dir / OUT_DIRNAME).iterdir())
+    assert len(out_files) == 1
+    payload = json.loads(out_files[0].read_text())
+    assert payload["metrics"] == {"sharpe": 1.23, "ann_return": 0.45}
 
 
 def test_sanitize_version_name_normalizes_common_inputs() -> None:
@@ -341,7 +419,7 @@ def test_cli_iterate_creates_version_file(
     assert (studies_root / "alpha" / "v1_quality_tilt.py").exists()
 
 
-def test_cli_run_executes_named_experiment(
+def test_cli_run_prints_metrics_json(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys,
@@ -360,10 +438,10 @@ def test_cli_run_executes_named_experiment(
     out = capsys.readouterr()
 
     assert code == 0
-    assert "Ran 1 study version(s)." in out.out
-    assert read_results_rows(studies_root / "alpha") == [
-        {"version": "v0", "sharpe": 1.1, "ann_return": 0.2}
-    ]
+    # stdout is JSON
+    parsed = json.loads(out.out)
+    assert parsed["version"] == "v0"
+    assert parsed["metrics"]["sharpe"] == 1.1
 
 
 def test_cli_run_can_execute_single_selected_version(
@@ -390,29 +468,81 @@ def test_cli_run_can_execute_single_selected_version(
     out = capsys.readouterr()
 
     assert code == 0
-    assert "Ran 1 study version(s)." in out.out
-    assert read_results_rows(studies_root / "alpha") == [
-        {"version": "v1_quality", "sharpe": 2.2, "ann_return": 0.3}
-    ]
+    parsed = json.loads(out.out)
+    assert parsed["version"] == "v1_quality"
+    assert parsed["metrics"]["sharpe"] == 2.2
 
 
-def test_render_results_table_omits_missing_columns() -> None:
-    table = render_results_table([{"version": "v0", "sharpe": 1.0}])
+def test_cli_append_writes_log_entry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+) -> None:
+    studies_root = tmp_path / "studies"
+    experiment_dir = create_experiment(studies_root, "alpha")
+    (tmp_path / CONFIG_FILENAME).write_text('studies_dir = "studies"\n', encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
 
-    assert "version" in table
-    assert "sharpe" in table
-    assert "ann_return" not in table
+    metrics_json = json.dumps({"net_sharpe": 0.68, "ann_return": 0.074})
+    code = main([
+        "append", "alpha",
+        "--version", "v1_test",
+        "--ancestor", "v0",
+        "--hypothesis", "Test hypothesis",
+        "--analysis", "Test analysis",
+        "--results", metrics_json,
+    ])
+    out = capsys.readouterr()
+
+    assert code == 0
+    assert "v1_test" in out.out
+
+    entries = read_log_entries(experiment_dir)
+    assert len(entries) == 1
+    assert entries[0]["version"] == "v1_test"
+    assert entries[0]["ancestor"] == "v0"
+    assert entries[0]["metrics"]["net_sharpe"] == 0.68
 
 
-def test_cli_show_results_prints_table(
+def test_cli_append_rejects_invalid_results_json(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys,
 ) -> None:
     studies_root = tmp_path / "studies"
     create_experiment(studies_root, "alpha")
-    (studies_root / "alpha" / "results.json").write_text(
-        json.dumps([{"version": "v0", "sharpe": 1.1, "ann_return": 0.2}]),
+    (tmp_path / CONFIG_FILENAME).write_text('studies_dir = "studies"\n', encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    code = main([
+        "append", "alpha",
+        "--version", "v1",
+        "--hypothesis", "h",
+        "--analysis", "a",
+        "--results", "{bad json",
+    ])
+    out = capsys.readouterr()
+
+    assert code == 1
+    assert "not valid JSON" in out.err
+
+
+def test_cli_show_results_reads_log_json(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+) -> None:
+    studies_root = tmp_path / "studies"
+    experiment_dir = create_experiment(studies_root, "alpha")
+    (experiment_dir / LOG_FILENAME).write_text(
+        json.dumps([{
+            "version": "v0",
+            "ancestor": None,
+            "hypothesis": "baseline",
+            "metrics": {"net_sharpe": 0.68, "ann_return": 0.074},
+            "analysis": "ok",
+            "run_at": "2026-01-01T00:00:00Z",
+        }]),
         encoding="utf-8",
     )
     monkeypatch.chdir(tmp_path)
@@ -422,9 +552,26 @@ def test_cli_show_results_prints_table(
     out = capsys.readouterr()
 
     assert code == 0
-    assert "version" in out.out
     assert "v0" in out.out
     assert out.err == ""
+
+
+def test_cli_show_results_missing_log_raises(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+) -> None:
+    studies_root = tmp_path / "studies"
+    experiment_dir = create_experiment(studies_root, "alpha")
+    (experiment_dir / LOG_FILENAME).unlink()
+    (tmp_path / CONFIG_FILENAME).write_text('studies_dir = "studies"\n', encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    code = main(["show-results", "alpha"])
+    out = capsys.readouterr()
+
+    assert code == 1
+    assert "Results file not found" in out.err
 
 
 def test_cli_reports_missing_experiment(
@@ -439,38 +586,6 @@ def test_cli_reports_missing_experiment(
 
     assert code == 1
     assert "Experiment not found" in out.err
-
-
-def test_cli_reports_missing_results_file(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys,
-) -> None:
-    studies_root = tmp_path / "studies"
-    create_experiment(studies_root, "alpha")
-    (studies_root / "alpha" / "results.json").unlink()
-    (tmp_path / CONFIG_FILENAME).write_text('studies_dir = "studies"\n', encoding="utf-8")
-    monkeypatch.chdir(tmp_path)
-
-    code = main(["show-results", "alpha"])
-    out = capsys.readouterr()
-
-    assert code == 1
-    assert "Results file not found" in out.err
-
-
-def test_cli_reports_invalid_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
-    studies_root = tmp_path / "studies"
-    create_experiment(studies_root, "alpha")
-    (studies_root / "alpha" / "results.json").write_text("{bad json", encoding="utf-8")
-    (tmp_path / CONFIG_FILENAME).write_text('studies_dir = "studies"\n', encoding="utf-8")
-    monkeypatch.chdir(tmp_path)
-
-    code = main(["show-results", "alpha"])
-    out = capsys.readouterr()
-
-    assert code == 1
-    assert "Malformed results JSON" in out.err
 
 
 def test_run_experiment_reports_missing_run_study(tmp_path: Path) -> None:
@@ -494,4 +609,7 @@ def test_run_experiment_ignores_iteration_index_file(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    assert run_experiment(experiment_dir) == [{"version": "v0", "sharpe": 1.0}]
+    rows = run_experiment(experiment_dir)
+    assert len(rows) == 1
+    assert rows[0]["version"] == "v0"
+    assert rows[0]["metrics"] == {"sharpe": 1.0}
