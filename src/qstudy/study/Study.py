@@ -28,6 +28,7 @@ from qstudy.study.portfolio import (
 )
 from qstudy.study.portfolio import (
     build_long_short_positions,
+    build_proportional_positions,
     liquidity,
     rebalance,
     rebalance_on,
@@ -734,6 +735,25 @@ class Study:
             return _build_long_only(signal, n=n)
 
         self._set_position_builder(fn, label=f"build_long_only(n={n})")
+        return self
+
+    def build_proportional_positions(self, clip_zscore: float = 3.0) -> Study:
+        """Build a dollar-neutral portfolio sized by signal strength.
+
+        Each date's cross-section is z-scored, clipped, demeaned, and normalized
+        so stronger signals get larger absolute weights while gross exposure stays
+        fixed at 1.0.
+
+        Args:
+            clip_zscore: Maximum absolute z-score retained before normalization.
+        """
+
+        def fn(signal):
+            return build_proportional_positions(signal, clip_zscore=clip_zscore)
+
+        self._set_position_builder(
+            fn, label=f"build_proportional_positions(clip_zscore={clip_zscore})"
+        )
         return self
 
     # ------------------------------------------------------------------
