@@ -96,6 +96,7 @@ class PortfolioStudy:
 
         # Portfolio-level weighting (across strategies); default = equal
         self._portfolio_weighting_fn: Callable | None = None
+        self._renormalize_combined: bool = False
 
         # Position scalers applied to combined positions before engine.run()
         self._position_scalers: list[Callable] = []
@@ -127,6 +128,16 @@ class PortfolioStudy:
     # ------------------------------------------------------------------
     # Portfolio-level weighting (how to weight strategy sleeves)
     # ------------------------------------------------------------------
+
+    def renormalize_positions(self) -> PortfolioStudy:
+        """Renormalize combined portfolio positions so abs(weights).sum() == 1.0 each day.
+
+        Off by default. Call this when you want the combined book to be fully invested
+        rather than preserving the dollar exposure implied by the sleeve weights.
+        Has no effect when strategies are already normalized and weights sum to 1.
+        """
+        self._renormalize_combined = True
+        return self
 
     def weight_equal(self) -> PortfolioStudy:
         """Equal weight across all strategy sleeves."""
@@ -383,7 +394,9 @@ class PortfolioStudy:
 
             # Stage 5: combine positions
             pbar.set_postfix({"stage": "combine_positions"})
-            combined_positions = _combine_positions(strategy_positions, weights_series)
+            combined_positions = _combine_positions(
+                strategy_positions, weights_series, renormalize=self._renormalize_combined
+            )
             self._cache["positions"] = combined_positions
             pbar.update(1)
 
@@ -398,9 +411,7 @@ class PortfolioStudy:
                     benchmark_returns=self._cache["benchmark"],
                     close=self._universe.close.reindex(idx_neu),
                 )
-                self._cache["factor_exposures"] = (
-                    self._neutralization_model.factor_exposures_
-                )
+                self._cache["factor_exposures"] = self._neutralization_model.factor_exposures_
                 pbar.update(1)
 
             # Stage 5b: apply position scalers (scale_risk / neutralize_positions)
@@ -707,14 +718,23 @@ def _apply_optimal_strategies(
 def _combine_positions(
     strategy_positions: dict[str, pd.DataFrame],
     weights: pd.Series,
+    renormalize: bool = False,
 ) -> pd.DataFrame:
     """Combine per-strategy position DataFrames into a single portfolio position DataFrame.
 
     Steps:
         1. Union all ticker columns.
         2. Reindex each strategy to the common date intersection and full ticker set.
+           Missing positions are treated as 0.0 (not held) rather than NaN.
         3. Weighted sum.
-        4. Renormalize per day so abs(w).sum() == 1.0.
+        4. Optionally renormalize per day so abs(w).sum() == 1.0 (off by default).
+
+    Args:
+        strategy_positions: Dict of strategy label -> positions DataFrame.
+        weights:            Series of strategy weights indexed by label.
+        renormalize:        If True, rescale combined rows so abs sum == 1.0 each day.
+                            Default False — preserves the dollar exposure implied by the
+                            individual strategy position sizes and the sleeve weights.
     """
     # Common date index: intersection across all strategies
     date_idx = None
@@ -737,7 +757,8 @@ def _combine_positions(
         aligned = positions.reindex(index=date_idx, columns=all_tickers).fillna(0.0)
         combined += w * aligned
 
-    # Renormalize: each row's abs sum == 1.0 (skip all-zero rows)
-    abs_sum = combined.abs().sum(axis=1).replace(0.0, float("nan"))
-    combined = combined.div(abs_sum, axis=0).fillna(0.0)
+    if renormalize:
+        abs_sum = combined.abs().sum(axis=1).replace(0.0, float("nan"))
+        combined = combined.div(abs_sum, axis=0).fillna(0.0)
+
     return combined

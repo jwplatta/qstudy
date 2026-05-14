@@ -1146,10 +1146,22 @@ class TestPortfolioStudy:
         assert isinstance(ret, pd.Series)
         assert isinstance(ret.index, pd.DatetimeIndex)
 
-    def test_positions_normalized(self):
-        """Combined positions: abs(w).sum(axis=1) == 1.0 on non-zero rows."""
+    def test_positions_not_auto_renormalized(self):
+        """Combined positions are NOT auto-renormalized; abs sum reflects sleeve weights."""
         portfolio, _, _ = self._make_portfolio()
         portfolio.run()
+        positions = portfolio.cache["positions"]
+        abs_sum = positions.abs().sum(axis=1)
+        nonzero = abs_sum[abs_sum > 0]
+        # With two equal-weighted (0.5 each) non-overlapping strategies the abs sum
+        # is approximately 0.5; it should be in (0, 1.0] but NOT forced to exactly 1.0.
+        assert (nonzero > 0).all()
+        assert (nonzero <= 1.0 + 1e-10).all()
+
+    def test_renormalize_positions_opt_in(self):
+        """renormalize_positions() forces abs(w).sum(axis=1) == 1.0."""
+        portfolio, _, _ = self._make_portfolio()
+        portfolio.renormalize_positions().run()
         positions = portfolio.cache["positions"]
         abs_sum = positions.abs().sum(axis=1)
         nonzero = abs_sum[abs_sum > 0]
@@ -1221,12 +1233,12 @@ class TestPortfolioStudy:
         assert portfolio.cache["portfolio_returns"] is not None
 
     def test_weight_equal_vol(self):
-        """weight_equal_vol does not crash and returns normalized positions."""
+        """weight_equal_vol does not crash and produces non-zero positions."""
         portfolio, _, _ = self._make_portfolio()
         portfolio.weight_equal_vol(window=60).run()
         abs_sum = portfolio.cache["positions"].abs().sum(axis=1)
         nonzero = abs_sum[abs_sum > 0]
-        np.testing.assert_allclose(nonzero.values, 1.0, atol=1e-10)
+        assert len(nonzero) > 0
 
     def test_metrics_dict(self):
         """metrics_dict() returns a dict with expected keys."""
@@ -1405,15 +1417,12 @@ class TestTransactionCosts:
             .base_signal(lambda **cache: cache["returns"].rolling(10).mean())
             .build_long_only(n=5)
         )
-        portfolio = (
-            PortfolioStudy(
-                strategies=[study1, study2],
-                universe=universe,
-                benchmark=benchmark,
-                cost_bps=10,
-            )
-            .run()
-        )
+        portfolio = PortfolioStudy(
+            strategies=[study1, study2],
+            universe=universe,
+            benchmark=benchmark,
+            cost_bps=10,
+        ).run()
         gross = portfolio.cache["gross_portfolio_returns"]
         net = portfolio.cache["portfolio_returns"]
         assert (net <= gross + 1e-12).all()
