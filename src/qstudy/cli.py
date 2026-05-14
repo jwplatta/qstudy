@@ -5,10 +5,8 @@ import json
 import sys
 
 from qstudy.experiments import (
-    CONFIG_FILENAME,
-    QStudyCliError,
     ConfigError,
-    ExperimentEntry,
+    QStudyCliError,
     append_log_entry,
     create_experiment,
     iterate_experiment,
@@ -17,8 +15,11 @@ from qstudy.experiments import (
     lookup_parent,
     read_log_entries,
     render_experiment_list,
+    render_query_result,
     render_results_table,
+    resolve_metric,
     run_experiment,
+    run_query,
 )
 
 
@@ -53,8 +54,8 @@ def build_parser() -> argparse.ArgumentParser:
     results_parser.add_argument("name", help="Experiment name")
 
     append_parser = subparsers.add_parser(
-        "append",
-        help="Append an annotated entry (metrics + hypothesis + analysis) to log.json",
+        "log-study",
+        help="Log metrics, hypothesis, and analysis for a study version to log.json",
     )
     append_parser.add_argument("name", help="Experiment name")
     append_parser.add_argument("--version", required=True, help="Study version stem")
@@ -71,6 +72,35 @@ def build_parser() -> argparse.ArgumentParser:
         "--parent",
         default=None,
         help="Parent version stem (optional; inferred from iteration index if omitted)",
+    )
+
+    query_parser = subparsers.add_parser(
+        "query", help="Query and sort experiment results by metric"
+    )
+    query_parser.add_argument("name", help="Experiment name")
+    query_parser.add_argument(
+        "--metric",
+        required=True,
+        help="Metric to sort by (e.g. net-sharpe, turnover, bench-corr)",
+    )
+    sort_group = query_parser.add_mutually_exclusive_group()
+    sort_group.add_argument(
+        "--sort",
+        choices=["asc", "desc"],
+        default="desc",
+        help="Sort direction: asc or desc (default: desc)",
+    )
+    sort_group.add_argument(
+        "--max",
+        dest="sort_max",
+        action="store_true",
+        help="Sort descending (highest first); shorthand for --sort desc",
+    )
+    sort_group.add_argument(
+        "--min",
+        dest="sort_min",
+        action="store_true",
+        help="Sort ascending (lowest first); shorthand for --sort asc",
     )
 
     return parser
@@ -118,7 +148,7 @@ def main(argv: list[str] | None = None) -> int:
             print(render_results_table(entries))
             return 0
 
-        if args.command == "append":
+        if args.command == "log-study":
             experiment_dir = config.studies_root / args.name
             if not experiment_dir.exists():
                 raise QStudyCliError(f"Experiment not found: {experiment_dir}")
@@ -142,6 +172,21 @@ def main(argv: list[str] | None = None) -> int:
             )
             ancestor_note = f" (parent: {entry.ancestor})" if entry.ancestor else ""
             print(f"Appended entry for {entry.version}{ancestor_note} to log.json")
+            return 0
+
+        if args.command == "query":
+            experiment_dir = config.studies_root / args.name
+            if not experiment_dir.exists():
+                raise QStudyCliError(f"Experiment not found: {experiment_dir}")
+            entries = read_log_entries(experiment_dir)
+            if not entries:
+                log_path = experiment_dir / "log.json"
+                if not log_path.exists():
+                    raise QStudyCliError(f"Results file not found: {log_path}")
+            field = resolve_metric(args.metric)
+            ascending = args.sort_min or (not args.sort_max and args.sort == "asc")
+            rows = run_query(entries, field, ascending)
+            print(render_query_result(rows, field, ascending))
             return 0
 
         parser.error(f"Unknown command: {args.command}")
