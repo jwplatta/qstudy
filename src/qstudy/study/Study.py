@@ -587,10 +587,29 @@ class Study:
         Use this when the built-in long/short or long-only builders don't fit your needs,
         e.g. proportional signal weighting, volatility-scaled weights, or custom bucketing.
 
+        Your function is responsible for producing a valid weight vector. Two utilities
+        are available in ``qstudy`` to help:
+
+        - ``qs.demean_weights(weights)`` — subtracts the cross-sectional mean to achieve
+          dollar neutrality (long $ == short $). Use before normalizing for long/short books.
+          Do not use for long-only builders.
+        - ``qs.normalize_weights(weights)`` — divides by abs sum so the book is fully
+          invested (abs weights sum to 1.0). Use as the final step in any custom builder.
+
+        Example::
+
+            def my_builder(signal):
+                # proportional signal weighting, dollar-neutral
+                weights = signal.fillna(0.0)
+                weights = qs.demean_weights(weights)
+                return qs.normalize_weights(weights)
+
+            study.build_positions(my_builder)
+
         Args:
             fn: ``fn(signal) -> pd.DataFrame`` — takes the fully filtered signal DataFrame
                 (dates x tickers, NaN = ineligible) and returns a positions DataFrame of the
-                same shape. Weights should sum to a consistent scale (e.g. abs sum = 1.0).
+                same shape.
         """
         self._set_position_builder(fn, label=getattr(fn, "__name__", "custom_positions"))
         return self
