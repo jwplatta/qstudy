@@ -38,10 +38,12 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-
 CHAIN_FILENAME_PATTERN = re.compile(
     r"^SPXW_exp(?P<expiry>\d{4}-\d{2}-\d{2})_(?P<sample_date>\d{4}-\d{2}-\d{2})_(?P<sample_time>\d{2}-\d{2}-\d{2})\.csv$"
 )
+ROLLING_WINDOW_DAYS = 20
+TRADING_DAYS_PER_YEAR = 252.0
+SHORT_STRIKE_STD_DEVS = 2.0
 
 
 @dataclass
@@ -49,6 +51,40 @@ class SelectedChain:
     expiry_date: date
     sample_timestamp: datetime
     path: Path
+
+
+def compute_expected_move_and_short_strikes(
+    spot_price: float,
+    iv_decimal: float,
+    horizon_trading_days: int,
+    width_std_devs: float = SHORT_STRIKE_STD_DEVS,
+) -> tuple[float, float, float, float]:
+    """
+    Convert annualized IV into an expected move and 2-sigma short strikes.
+
+    Returns:
+        (expected_move_pct_decimal, expected_move_points, short_put_strike, short_call_strike)
+    """
+    expected_move_pct = iv_decimal * math.sqrt(horizon_trading_days / TRADING_DAYS_PER_YEAR)
+    expected_move_points = spot_price * expected_move_pct
+    short_call_strike = spot_price + (width_std_devs * expected_move_points)
+    short_put_strike = spot_price - (width_std_devs * expected_move_points)
+    return expected_move_pct, expected_move_points, short_put_strike, short_call_strike
+
+
+def evaluate_short_leg_breaches(
+    expiry_spx: float,
+    short_put_strike: float,
+    short_call_strike: float,
+) -> tuple[bool, bool, bool, str]:
+    """
+    Check whether expiry settlement finishes outside the short strikes.
+    """
+    short_put_breached = expiry_spx < short_put_strike
+    short_call_breached = expiry_spx > short_call_strike
+    either_short_breached = short_put_breached or short_call_breached
+    outcome = "loss" if either_short_breached else "win"
+    return short_put_breached, short_call_breached, either_short_breached, outcome
 
 
 def parse_chain_filename(path: Path) -> tuple[date, datetime] | None:
@@ -193,7 +229,10 @@ def load_spx_closes() -> dict[str, float]:
     return closes
 
 
-def find_next_trading_day_close(entry_day: date, closes: dict[str, float]) -> tuple[str, float] | None:
+def find_next_trading_day_close(
+    entry_day: date,
+    closes: dict[str, float],
+) -> tuple[str, float] | None:
     """
     Find the next available close after the entry date.
 
@@ -208,6 +247,31 @@ def find_next_trading_day_close(entry_day: date, closes: dict[str, float]) -> tu
 
     next_day = trading_days[next_index]
     return next_day, closes[next_day]
+
+
+def build_trailing_1d_rv_average(closes: dict[str, float]) -> dict[str, float]:
+    """
+    Build a simple trailing average of 1-day annualized realized vol.
+
+    For each trading day, this stores the average of the last 20 close-to-close
+    realized-vol observations available by that day.
+    """
+    trading_days = sorted(closes)
+    trailing_rv_by_day: dict[str, float] = {}
+    one_day_rvs: list[float] = []
+
+    for index in range(1, len(trading_days)):
+        previous_day = trading_days[index - 1]
+        current_day = trading_days[index]
+        log_return = math.log(closes[current_day] / closes[previous_day])
+        one_day_rvs.append(math.sqrt(252.0) * abs(log_return))
+
+        if len(one_day_rvs) >= ROLLING_WINDOW_DAYS:
+            trailing_rv_by_day[current_day] = (
+                sum(one_day_rvs[-ROLLING_WINDOW_DAYS:]) / ROLLING_WINDOW_DAYS
+            )
+
+    return trailing_rv_by_day
 
 
 def format_pct(value: float) -> str:
@@ -245,6 +309,7 @@ def main() -> None:
     if not spx_closes:
         print("No SPX close data found")
         return
+    trailing_rv_average = build_trailing_1d_rv_average(spx_closes)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -261,12 +326,19 @@ def main() -> None:
                 "next_close_spx",
                 "atm_strike",
                 "iv_pct",
+                "trailing_avg_rv_pct",
                 "rv_pct",
                 "spread_pct",
                 "expected_move_pct",
+                "expected_move_pts",
                 "actual_move_pct",
                 "move_spread_pct",
-                "chain_file",
+                "short_put_strike",
+                "short_call_strike",
+                "short_put_breached",
+                "short_call_breached",
+                "either_short_breached",
+                "synthetic_condor_outcome",
                 "status",
             ]
         )
@@ -274,6 +346,7 @@ def main() -> None:
         for chain in selected_chains:
             atm_info = estimate_atm_iv(chain.path)
             if atm_info is None:
+                trailing_avg_rv = trailing_rv_average.get(chain.sample_timestamp.date().isoformat())
                 writer.writerow(
                     [
                         chain.expiry_date.isoformat(),
@@ -282,6 +355,7 @@ def main() -> None:
                         "",
                         "",
                         "",
+                        format_pct(trailing_avg_rv) if trailing_avg_rv is not None else "",
                         "",
                         "",
                         "",
@@ -289,7 +363,12 @@ def main() -> None:
                         "",
                         "",
                         "",
-                        str(chain.path),
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
                         "missing_atm_iv",
                     ]
                 )
@@ -297,6 +376,7 @@ def main() -> None:
                 continue
 
             entry_spx, atm_strike, atm_iv = atm_info
+            trailing_avg_rv = trailing_rv_average.get(chain.sample_timestamp.date().isoformat())
             next_close_info = find_next_trading_day_close(chain.sample_timestamp.date(), spx_closes)
             if next_close_info is None:
                 writer.writerow(
@@ -309,12 +389,18 @@ def main() -> None:
                         "",
                         f"{atm_strike:.2f}",
                         format_pct(atm_iv),
+                        format_pct(trailing_avg_rv) if trailing_avg_rv is not None else "",
                         "",
                         "",
                         "",
                         "",
                         "",
-                        str(chain.path),
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
                         "missing_next_trading_day_close",
                     ]
                 )
@@ -324,10 +410,23 @@ def main() -> None:
             next_trading_day, next_close_spx = next_close_info
             log_return = math.log(next_close_spx / entry_spx)
             realized_move = abs(log_return)
-            rv_annualized = math.sqrt(252.0) * realized_move
+            rv_annualized = math.sqrt(TRADING_DAYS_PER_YEAR) * realized_move
             spread_annualized = atm_iv - rv_annualized
-            expected_move = atm_iv / math.sqrt(252.0)
+            expected_move, expected_move_points, short_put_strike, short_call_strike = (
+                compute_expected_move_and_short_strikes(
+                    spot_price=entry_spx,
+                    iv_decimal=atm_iv,
+                    horizon_trading_days=1,
+                )
+            )
             move_spread = expected_move - realized_move
+            short_put_breached, short_call_breached, either_short_breached, condor_outcome = (
+                evaluate_short_leg_breaches(
+                    expiry_spx=next_close_spx,
+                    short_put_strike=short_put_strike,
+                    short_call_strike=short_call_strike,
+                )
+            )
 
             writer.writerow(
                 [
@@ -339,12 +438,19 @@ def main() -> None:
                     f"{next_close_spx:.2f}",
                     f"{atm_strike:.2f}",
                     format_pct(atm_iv),
+                    format_pct(trailing_avg_rv) if trailing_avg_rv is not None else "",
                     format_pct(rv_annualized),
                     format_pct(spread_annualized),
                     format_pct(expected_move),
+                    f"{expected_move_points:.2f}",
                     format_pct(realized_move),
                     format_pct(move_spread),
-                    str(chain.path),
+                    f"{short_put_strike:.2f}",
+                    f"{short_call_strike:.2f}",
+                    str(short_put_breached).lower(),
+                    str(short_call_breached).lower(),
+                    str(either_short_breached).lower(),
+                    condor_outcome,
                     "ok",
                 ]
             )
