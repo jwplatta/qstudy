@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import importlib.util
 import json
 import re
@@ -7,23 +8,23 @@ import shutil
 import sys
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import pandas as pd
-
 CONFIG_FILENAME = ".qstudy.toml"
-RESULTS_FILENAME = "results.json"
-RESULTS_CSV_FILENAME = "results.csv"
+LOG_FILENAME = "log.json"
+OUT_DIRNAME = "out"
 ITERATION_INDEX_FILENAME = "iteration_index.json"
-DEFAULT_RESULTS_COLUMNS = [
+DEFAULT_LOG_COLUMNS = [
     "version",
-    "sharpe",
-    "ann_return",
-    "ann_vol",
-    "max_drawdown",
-    "information_ratio",
-    "avg_daily_turnover",
+    "ancestor",
+    "metrics.net_sharpe",
+    "metrics.ann_return",
+    "metrics.ann_vol",
+    "metrics.max_drawdown",
+    "metrics.information_ratio",
+    "metrics.avg_daily_turnover",
 ]
 
 _STUDY_FILE_RE = re.compile(r"^v(\d+)(?:[^/]*)\.py$")
@@ -43,6 +44,21 @@ class StudiesConfig:
     studies_root: Path
     data_root: Path | None
     source: Path | None
+
+
+@dataclass
+class ExperimentEntry:
+    """A single annotated log entry combining metrics with researcher notes."""
+
+    version: str
+    ancestor: str | None
+    hypothesis: str
+    metrics: dict[str, Any]
+    analysis: str
+    run_at: str  # ISO 8601 UTC
+
+    def to_dict(self) -> dict[str, Any]:
+        return dataclasses.asdict(self)
 
 
 def load_studies_config(
@@ -178,9 +194,7 @@ def scaffold_files(name: str) -> dict[str, str]:
         "v0.py": _v0_template(name),
         "run.py": _run_template(),
         ITERATION_INDEX_FILENAME: f"{json.dumps(iteration_index, indent=2)}\n",
-        RESULTS_FILENAME: "[]\n",
-        RESULTS_CSV_FILENAME: "version\n",
-        "log.md": f"# {title} Log\n\n- Created with `qstudy create {name}`.\n",
+        LOG_FILENAME: "[]\n",
         "readme.md": _readme_template(name, title),
     }
 
@@ -257,8 +271,8 @@ def run_experiment(experiment_dir: Path, version: str | None = None) -> list[dic
     rows: list[dict[str, Any]] = []
     with _prepend_sys_path(experiment_dir):
         for version_file in version_files:
-            version = version_file.stem
-            module_name = f"qstudy_experiment_{experiment_dir.name}_{version}"
+            version_stem = version_file.stem
+            module_name = f"qstudy_experiment_{experiment_dir.name}_{version_stem}"
             module = _load_module(version_file, module_name)
             run_study = getattr(module, "run_study", None)
             if not callable(run_study):
@@ -268,25 +282,80 @@ def run_experiment(experiment_dir: Path, version: str | None = None) -> list[dic
             if not isinstance(metrics, dict):
                 raise QStudyCliError(f"run_study() in {version_file} must return a dict")
 
-            row = {"version": version}
-            row.update(flatten_metrics(metrics))
+            run_at = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            write_out_artifact(experiment_dir, version_stem, metrics, run_at)
+
+            row = {"version": version_stem, "run_at": run_at, "metrics": metrics}
             rows.append(row)
 
-    write_results_artifacts(experiment_dir, rows)
     return rows
 
 
-def write_results_artifacts(experiment_dir: Path, rows: list[dict[str, Any]]) -> None:
-    json_path = experiment_dir / RESULTS_FILENAME
-    csv_path = experiment_dir / RESULTS_CSV_FILENAME
+def write_out_artifact(
+    experiment_dir: Path,
+    version_stem: str,
+    metrics: dict[str, Any],
+    run_at: str,
+) -> None:
+    """Write raw metrics to out/<timestamp>_<version>.json. Never overwrites."""
+    out_dir = experiment_dir / OUT_DIRNAME
+    out_dir.mkdir(exist_ok=True)
+    ts = run_at.replace("-", "").replace(":", "").replace("T", "T").replace("Z", "")
+    filename = f"{ts}_{version_stem}.json"
+    payload = {"version": version_stem, "run_at": run_at, "metrics": metrics}
+    (out_dir / filename).write_text(
+        f"{json.dumps(payload, indent=2, default=str)}\n", encoding="utf-8"
+    )
 
-    json_path.write_text(f"{json.dumps(rows, indent=2, default=str)}\n", encoding="utf-8")
 
-    all_columns = union_columns(rows, leading_columns=["version"])
-    frame = pd.DataFrame(rows)
-    if all_columns:
-        frame = frame.reindex(columns=all_columns)
-    frame.to_csv(csv_path, index=False)
+def append_log_entry(
+    experiment_dir: Path,
+    version: str,
+    ancestor: str | None,
+    hypothesis: str,
+    analysis: str,
+    metrics: dict[str, Any],
+    run_at: str | None = None,
+) -> ExperimentEntry:
+    """Append a fully-annotated entry to log.json and return it."""
+    if run_at is None:
+        run_at = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    entry = ExperimentEntry(
+        version=version,
+        ancestor=ancestor,
+        hypothesis=hypothesis,
+        metrics=metrics,
+        analysis=analysis,
+        run_at=run_at,
+    )
+
+    entries = read_log_entries(experiment_dir)
+    entries.append(entry.to_dict())
+
+    log_path = experiment_dir / LOG_FILENAME
+    log_path.write_text(f"{json.dumps(entries, indent=2, default=str)}\n", encoding="utf-8")
+    return entry
+
+
+def read_log_entries(experiment_dir: Path) -> list[dict[str, Any]]:
+    """Read log.json and return the list of entries (empty list if file missing)."""
+    log_path = experiment_dir / LOG_FILENAME
+    if not log_path.exists():
+        return []
+
+    try:
+        payload = json.loads(log_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise QStudyCliError(f"Malformed log JSON in {log_path}: {exc.msg}") from exc
+
+    if payload == []:
+        return []
+    if not isinstance(payload, list) or not all(isinstance(row, dict) for row in payload):
+        raise QStudyCliError(
+            f"Malformed log JSON in {log_path}: expected a list of objects"
+        )
+    return [dict(row) for row in payload]
 
 
 def read_iteration_index_rows(experiment_dir: Path) -> list[dict[str, Any]]:
@@ -316,38 +385,31 @@ def write_iteration_index_rows(experiment_dir: Path, rows: list[dict[str, Any]])
     index_path.write_text(f"{json.dumps(rows, indent=2)}\n", encoding="utf-8")
 
 
-def read_results_rows(experiment_dir: Path) -> list[dict[str, Any]]:
-    results_path = experiment_dir / RESULTS_FILENAME
-    if not results_path.exists():
-        raise QStudyCliError(f"Results file not found: {results_path}")
+def render_results_table(entries: list[dict[str, Any]]) -> str:
+    """Render a summary table from log.json entries.
 
-    try:
-        payload = json.loads(results_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise QStudyCliError(f"Malformed results JSON in {results_path}: {exc.msg}") from exc
-
-    if payload == []:
-        return []
-    if not isinstance(payload, list) or not all(isinstance(row, dict) for row in payload):
-        raise QStudyCliError(
-            f"Malformed results JSON in {results_path}: expected a list of objects"
-        )
-
-    return [dict(row) for row in payload]
-
-
-def render_results_table(rows: list[dict[str, Any]]) -> str:
-    if not rows:
+    Each entry has a nested ``metrics`` dict. Columns are drawn from
+    DEFAULT_LOG_COLUMNS using dotted paths (e.g. ``metrics.net_sharpe``).
+    """
+    if not entries:
         return "No results have been recorded yet."
 
+    # Flatten nested metrics for display only
+    flat_rows = []
+    for entry in entries:
+        flat: dict[str, Any] = {"version": entry.get("version"), "ancestor": entry.get("ancestor")}
+        for k, v in (entry.get("metrics") or {}).items():
+            flat[f"metrics.{k}"] = v
+        flat_rows.append(flat)
+
     columns = [
-        column
-        for column in DEFAULT_RESULTS_COLUMNS
-        if any(row.get(column) not in {None, ""} for row in rows)
+        col
+        for col in DEFAULT_LOG_COLUMNS
+        if any(row.get(col) not in {None, ""} for row in flat_rows)
     ]
     if "version" not in columns:
         columns.insert(0, "version")
-    return render_table(rows, columns)
+    return render_table(flat_rows, columns)
 
 
 def render_experiment_list(rows: list[tuple[str, int]]) -> str:
