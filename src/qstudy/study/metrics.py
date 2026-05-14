@@ -109,9 +109,12 @@ def rolling_sharpe(
 def turnover(positions: pd.DataFrame) -> pd.Series:
     """Daily one-way turnover: sum of absolute position changes across tickers.
 
+    Missing positions are treated as 0.0 so that first-day entries and gaps in
+    coverage don't produce artificially inflated turnover.
+
     Useful for estimating transaction cost drag.
     """
-    return positions.diff().abs().sum(axis=1)
+    return positions.fillna(0.0).diff().abs().sum(axis=1)
 
 
 def information_ratio(

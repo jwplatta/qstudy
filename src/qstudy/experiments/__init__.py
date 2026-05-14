@@ -28,6 +28,12 @@ from qstudy.experiments.log import (
     read_log_entries,
     write_out_artifact,
 )
+from qstudy.experiments.query import (
+    METRIC_NAMES,
+    render_query_result,
+    resolve_metric,
+    run_query,
+)
 from qstudy.experiments.runner import run_experiment
 from qstudy.experiments.scaffold import (
     ITERATION_INDEX_FILENAME,
@@ -65,6 +71,11 @@ __all__ = [
     "append_log_entry",
     "read_log_entries",
     "write_out_artifact",
+    # query
+    "METRIC_NAMES",
+    "render_query_result",
+    "resolve_metric",
+    "run_query",
     # runner
     "run_experiment",
     # scaffold
