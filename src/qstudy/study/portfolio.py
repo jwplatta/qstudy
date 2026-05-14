@@ -5,7 +5,6 @@ from collections.abc import Callable
 import numpy as np
 import pandas as pd
 
-
 # ---------------------------------------------------------------------------
 # Tradeable constraint factories
 # ---------------------------------------------------------------------------
@@ -188,6 +187,28 @@ def build_long_only(
     return positions.div(count, axis=0)
 
 
+def build_proportional_positions(
+    signal: pd.DataFrame,
+    clip_zscore: float = 3.0,
+) -> pd.DataFrame:
+    """Convert a signal DataFrame into signal-proportional dollar-neutral positions.
+
+    Each row is standardized cross-sectionally, clipped to control outliers, then
+    demeaned and normalized so ``abs(weights).sum(axis=1) == 1.0``.
+
+    Args:
+        signal: Signal DataFrame (dates x tickers). NaN = ineligible.
+        clip_zscore: Maximum absolute z-score retained before normalization.
+
+    Returns:
+        Float DataFrame of weights (dates x tickers), dollar-neutral.
+    """
+    zscore = signal.sub(signal.mean(axis=1), axis=0).div(signal.std(axis=1), axis=0)
+    zscore = zscore.clip(-clip_zscore, clip_zscore)
+    zscore = demean_weights(zscore)
+    return normalize_weights(zscore)
+
+
 def rebalance(
     positions: pd.DataFrame,
     every: int = 5,
@@ -282,6 +303,7 @@ def rank_change_trigger(threshold: float = 0.7) -> Callable[[pd.Series, pd.Serie
                    rebalance only when the signal rank ordering agrees less than 70%
                    of the time between the current and proposed dates.
     """
+
     def trigger(current: pd.Series, proposed: pd.Series) -> bool:
         # Drop NaN (ineligible) tickers — only compare where both are ranked
         valid = current.notna() & proposed.notna()
@@ -314,6 +336,7 @@ def book_overlap_trigger(
         min_overlap: Jaccard similarity threshold. 0.7 means rebalance when less than
                      70% of the current long (or short) names would survive. Default 0.7.
     """
+
     def trigger(current: pd.Series, proposed: pd.Series) -> bool:
         valid = current.notna() & proposed.notna()
         if valid.sum() < n * 2:
