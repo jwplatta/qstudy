@@ -1298,7 +1298,8 @@ class Study:
     def __repr__(self) -> str:
         steps = [s[0] for s in self._steps]
         ran = self._cache.get("portfolio_returns") is not None
+        weighting = any(s[1] == "weight" for s in self._steps)
         return (
             f"Study(name={self._name!r}, steps={steps}, "
-            f"weighting={self._weighting_fn is not None}, ran={ran})"
+            f"weighting={weighting}, ran={ran})"
         )
