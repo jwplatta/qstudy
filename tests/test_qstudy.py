@@ -19,7 +19,12 @@ from qstudy.study.metrics import (
     sharpe,
     turnover,
 )
-from qstudy.study.portfolio import build_long_short_positions, liquidity_filter, rebalance
+from qstudy.study.portfolio import (
+    build_long_short_positions,
+    build_proportional_positions,
+    liquidity_filter,
+    rebalance,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -107,6 +112,42 @@ class TestBuildPositions:
         assert row["C"] == 0
         assert row["D"] < 0
         assert row["E"] < 0
+
+    def test_proportional_positions_match_expected_weights(self):
+        """Proportional builder should size by clipped cross-sectional z-score."""
+        dates = make_dates(1)
+        signal = pd.DataFrame([[3.0, 1.0, -1.0, -3.0]], index=dates, columns=list("ABCD"))
+        positions = build_proportional_positions(signal)
+        expected = pd.DataFrame([[0.375, 0.125, -0.125, -0.375]], index=dates, columns=list("ABCD"))
+        pd.testing.assert_frame_equal(positions, expected)
+
+    def test_proportional_positions_are_dollar_neutral_and_fully_invested(self):
+        """Proportional builder should keep row sums at 0 and gross at 1."""
+        dates = make_dates(5)
+        rng = np.random.default_rng(3)
+        signal = pd.DataFrame(
+            rng.normal(0, 1, (5, 12)), index=dates, columns=[f"T{i}" for i in range(12)]
+        )
+        positions = build_proportional_positions(signal)
+        np.testing.assert_allclose(positions.sum(axis=1).values, 0.0, atol=1e-10)
+        np.testing.assert_allclose(positions.abs().sum(axis=1).values, 1.0, atol=1e-10)
+
+    def test_proportional_positions_preserve_nan_ineligible_assets(self):
+        """NaN signals should stay NaN in the output weights."""
+        dates = make_dates(1)
+        signal = pd.DataFrame([[2.0, 0.0, np.nan, -2.0]], index=dates, columns=list("ABCD"))
+        positions = build_proportional_positions(signal)
+        assert np.isnan(positions.loc[dates[0], "C"])
+        np.testing.assert_allclose(positions.drop(columns="C").sum(axis=1).values, 0.0, atol=1e-10)
+
+    def test_proportional_positions_respect_clip_zscore(self):
+        """Clipping should change the final cross-sectional weight mix."""
+        dates = make_dates(1)
+        signal = pd.DataFrame([[100.0, 5.0, 0.0, -1.0, -2.0]], index=dates, columns=list("ABCDE"))
+        unclipped = build_proportional_positions(signal, clip_zscore=100.0)
+        clipped = build_proportional_positions(signal, clip_zscore=0.5)
+        assert not np.isclose(clipped.loc[dates[0], "B"], unclipped.loc[dates[0], "B"])
+        np.testing.assert_allclose(clipped.abs().sum(axis=1).values, 1.0, atol=1e-10)
 
 
 # ---------------------------------------------------------------------------
@@ -778,6 +819,19 @@ class TestStudyNewMethods:
         realized_vol = port_ret.std() * (252**0.5)
         # Should be within 3x of target (loose check — scaling uses lookback)
         assert realized_vol < target * 3
+
+    def test_build_proportional_positions_matches_helper(self):
+        from qstudy import Study
+
+        universe, benchmark = make_study_data(n_dates=80, n_tickers=12, seed=11)
+        study = (
+            Study(universe=universe, benchmark=benchmark)
+            .base_signal(mr5)
+            .build_proportional_positions()
+            .run()
+        )
+        expected = build_proportional_positions(mr5(returns=universe.returns))
+        pd.testing.assert_frame_equal(study.cache["positions"], expected)
 
     def test_backward_compat_scale_returns_alias(self):
         """scale_returns(fn) should still work and emit a DeprecationWarning."""
