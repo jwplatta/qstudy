@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+echo "Installing qstudy from $REPO_DIR..."
+uv tool install --editable "$REPO_DIR"
+echo "Done. 'qstudy' is now available globally."
