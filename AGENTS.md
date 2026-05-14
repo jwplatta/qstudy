@@ -2,6 +2,18 @@
 
 This repository is centered on `qstudy`: a Python library for quickly iterating on trading ideas with unconstrained backtests. Prefer work in `src/qstudy/` unless a task explicitly targets older top-level `src/` modules, charts, or docs utilities.
 
+## Required Workflow
+
+Agents must read and follow `CONTRIBUTING.md` before making substantial changes. Treat that file as the source of truth for contribution process and Git workflow.
+
+Key requirements from `CONTRIBUTING.md`:
+
+- Use a Git worktree for feature or fix work instead of developing directly in the main clone.
+- Never commit directly to `main`.
+- Use branch names prefixed with `feature/`, `fix/`, or `chore/`.
+- Run formatting, linting, and tests before committing.
+- Keep changes focused and covered by tests where practical.
+
 ## Skills
 
 Before starting substantial work, check whether a shared skill applies. Use `skillex` first.
