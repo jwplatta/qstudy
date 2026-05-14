@@ -5,10 +5,8 @@ import json
 import sys
 
 from qstudy.experiments import (
-    CONFIG_FILENAME,
-    QStudyCliError,
     ConfigError,
-    ExperimentEntry,
+    QStudyCliError,
     append_log_entry,
     create_experiment,
     iterate_experiment,
@@ -53,8 +51,8 @@ def build_parser() -> argparse.ArgumentParser:
     results_parser.add_argument("name", help="Experiment name")
 
     append_parser = subparsers.add_parser(
-        "append",
-        help="Append an annotated entry (metrics + hypothesis + analysis) to log.json",
+        "log-study",
+        help="Log metrics, hypothesis, and analysis for a study version to log.json",
     )
     append_parser.add_argument("name", help="Experiment name")
     append_parser.add_argument("--version", required=True, help="Study version stem")
@@ -118,7 +116,7 @@ def main(argv: list[str] | None = None) -> int:
             print(render_results_table(entries))
             return 0
 
-        if args.command == "append":
+        if args.command == "log-study":
             experiment_dir = config.studies_root / args.name
             if not experiment_dir.exists():
                 raise QStudyCliError(f"Experiment not found: {experiment_dir}")

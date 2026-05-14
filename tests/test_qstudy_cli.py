@@ -534,7 +534,7 @@ def test_cli_append_writes_log_entry(
 
     metrics_json = json.dumps({"net_sharpe": 0.68, "ann_return": 0.074})
     code = main([
-        "append", "alpha",
+        "log-study", "alpha",
         "--version", "v1_test",
         "--parent", "v0",
         "--hypothesis", "Test hypothesis",
@@ -564,7 +564,7 @@ def test_cli_append_rejects_invalid_results_json(
     monkeypatch.chdir(tmp_path)
 
     code = main([
-        "append", "alpha",
+        "log-study", "alpha",
         "--version", "v1",
         "--hypothesis", "h",
         "--analysis", "a",
