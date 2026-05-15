@@ -94,6 +94,7 @@ class Study:
         factors: StudyData | None = None,
         name: str | None = None,
         cost_bps: float = 0.0,
+        verbose: bool = True,
     ) -> None:
         """
         Args:
@@ -107,6 +108,7 @@ class Study:
             factors:   Optional :class:`~qstudy.data.loader.StudyData` for residualization
                        factors (takes priority over benchmark).
             name:      Optional label shown in the tqdm progress bar.
+            verbose:   If False, suppress the tqdm progress bar. Default True.
         """
         if universe is not None and not isinstance(universe, StudyData):
             raise TypeError(
@@ -117,6 +119,7 @@ class Study:
         self._name = name
         self._factors_data = factors
         self._cost_bps: float = float(cost_bps)
+        self._verbose: bool = verbose
 
         # Pipeline state
         self._steps: list[tuple[str, str, Callable]] = []
@@ -979,7 +982,7 @@ class Study:
         self._cache["_cost_bps_config"] = self._cost_bps
 
         stages = self._build_stage_list()
-        with tqdm(total=len(stages), desc=self._name or "Study.run") as pbar:
+        with tqdm(total=len(stages), desc=self._name or "Study.run", disable=not self._verbose) as pbar:
             # Stage: fit factor model (optional, must run before residualize)
             if self._factor_model is not None:
                 pbar.set_postfix({"stage": "factor_model"})
