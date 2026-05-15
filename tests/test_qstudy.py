@@ -113,6 +113,80 @@ class TestBuildPositions:
         assert row["D"] < 0
         assert row["E"] < 0
 
+    def test_short_positions_are_negative(self):
+        """All short positions must be strictly negative — regression guard for zeroed-short bug."""
+        dates = make_dates(5)
+        rng = np.random.default_rng(42)
+        signal = pd.DataFrame(
+            rng.normal(0, 1, (5, 20)), index=dates, columns=[f"T{i}" for i in range(20)]
+        )
+        pos = build_long_short_positions(signal, n_long=5, n_short=5)
+        short_positions = pos[pos < 0]
+        assert not short_positions.empty, "should have short positions"
+        assert (short_positions < 0).all().all(), "all short positions must be strictly negative"
+
+    def test_long_and_short_counts_do_not_cancel(self):
+        """A ticker cannot be both long and short — positions must not cancel to zero.
+
+        Regression: short_cutoff = n_total - (n_short - 1) can overlap with the long bucket
+        when n_long + n_short >= n_total, causing long_mask & short_mask to both be True
+        and the subtraction to produce 0.0 instead of a signed position.
+        """
+        dates = make_dates(3)
+        # 6 tickers, asking for 3 longs and 3 shorts — overlap is possible at the boundary
+        signal = pd.DataFrame(
+            [[6, 5, 4, 3, 2, 1]] * 3,
+            index=dates,
+            columns=list("ABCDEF"),
+            dtype=float,
+        )
+        pos = build_long_short_positions(signal, n_long=3, n_short=3)
+        # No position should be exactly zero (every ticker is either long or short)
+        assert (pos != 0).all().all(), "with n_long+n_short == n_tickers, all positions should be non-zero"
+        assert (pos > 0).sum(axis=1).eq(3).all(), "should have exactly 3 longs"
+        assert (pos < 0).sum(axis=1).eq(3).all(), "should have exactly 3 shorts"
+
+    def test_short_count_matches_requested_with_asymmetric_params(self):
+        """n_long != n_short: both counts must match exactly, shorts must be negative."""
+        dates = make_dates(4)
+        rng = np.random.default_rng(7)
+        signal = pd.DataFrame(
+            rng.normal(0, 1, (4, 30)), index=dates, columns=[f"T{i}" for i in range(30)]
+        )
+        pos = build_long_short_positions(signal, n_long=3, n_short=10)
+        assert (pos > 0).sum(axis=1).eq(3).all(), "should have exactly 3 longs"
+        assert (pos < 0).sum(axis=1).eq(10).all(), "should have exactly 10 shorts"
+
+    def test_nan_universe_shorts_come_from_tradeable_tickers(self):
+        """Regression: with a large NaN universe (e.g. 500 tickers, 20 tradeable),
+        the short book must be filled from tradeable tickers, not the NaN-ranked tail.
+
+        The bug: signal_rank.count() returns 500 (no NaNs after na_option='bottom'),
+        so short_cutoff = 500 - (n_short-1) = 481, selecting only the NaN-ranked tickers
+        as shorts. Those get zeroed by the tradeable mask, leaving the book long-only.
+        """
+        dates = make_dates(3)
+        n_total = 500
+        n_tradeable = 20
+        n_long = 5
+        n_short = 5
+        rng = np.random.default_rng(99)
+        # Only first n_tradeable columns have signal; the rest are NaN (non-tradeable)
+        data = np.full((3, n_total), np.nan)
+        data[:, :n_tradeable] = rng.normal(0, 1, (3, n_tradeable))
+        cols = [f"T{i}" for i in range(n_total)]
+        signal = pd.DataFrame(data, index=dates, columns=cols)
+
+        pos = build_long_short_positions(signal, n_long=n_long, n_short=n_short)
+
+        assert (pos > 0).sum(axis=1).eq(n_long).all(), "should have exactly n_long longs"
+        assert (pos < 0).sum(axis=1).eq(n_short).all(), "should have exactly n_short shorts"
+        # Shorts must come from the tradeable universe, not the NaN-signal tickers
+        tradeable_cols = cols[:n_tradeable]
+        non_tradeable_cols = cols[n_tradeable:]
+        assert (pos[non_tradeable_cols] == 0).all().all(), "NaN-signal tickers must not be shorted"
+        assert (pos[tradeable_cols] < 0).any().any(), "shorts must come from tradeable tickers"
+
     def test_proportional_positions_match_expected_weights(self):
         """Proportional builder should size by clipped cross-sectional z-score."""
         dates = make_dates(1)
@@ -141,7 +215,7 @@ class TestBuildPositions:
         np.testing.assert_allclose(positions.drop(columns="C").sum(axis=1).values, 0.0, atol=1e-10)
 
     def test_proportional_positions_respect_clip_zscore(self):
-        """Clipping should change the final cross-sectional weight mix."""
+        """Clipping should reduce concentration in extreme-signal names."""
         dates = make_dates(1)
         signal = pd.DataFrame([[100.0, 5.0, 0.0, -1.0, -2.0]], index=dates, columns=list("ABCDE"))
         unclipped = build_proportional_positions(signal, clip_zscore=100.0)
@@ -1589,6 +1663,62 @@ class TestTransactionCosts:
         assert portfolio._cost_bps == pytest.approx(8.0)
         assert portfolio.cache["gross_portfolio_returns"] is not None
         assert "cost_bps" in portfolio.cache["metrics_summary"]
+
+    def test_no_turnover_on_child_non_rebalance_days(self):
+        """When all child studies hold positions (rebalance(every=N)), the combined
+        portfolio positions are identical to the prior day and turnover is zero."""
+        from qstudy import PortfolioStudy, Study
+        from qstudy.study.metrics import turnover
+
+        universe, benchmark = make_study_data(n_dates=150, seed=7)
+
+        every = 5
+        study1 = (
+            Study(name="mr")
+            .base_signal(mr5)
+            .build_long_short(n_long=3, n_short=3)
+            .rebalance(every=every)
+        )
+        study2 = (
+            Study(name="mr2")
+            .base_signal(mr5)
+            .build_long_short(n_long=3, n_short=3)
+            .rebalance(every=every)
+        )
+        portfolio = PortfolioStudy(
+            strategies=[study1, study2],
+            universe=universe,
+            benchmark=benchmark,
+        ).run()
+
+        positions = portfolio.cache["positions"]
+
+        # Identify non-rebalance days: days where neither child rebalanced.
+        # Both studies use the same every=5 schedule anchored at index 0, so
+        # non-rebalance days are indices where i % every != 0 (after warm-up).
+        daily_turnover = turnover(positions)
+
+        # Drop the very first day (NaN — no prior position to compare against)
+        daily_turnover = daily_turnover.dropna()
+
+        # On days where positions are unchanged, turnover must be exactly 0.
+        # Both children rebalance on the same schedule (index % 5 == 0), so
+        # on non-rebalance days combined positions are a forward-fill → no change.
+        pos_idx = positions.index
+        non_rebalance_mask = pd.Series(
+            [i % every != 0 for i in range(len(pos_idx))],
+            index=pos_idx,
+        )
+        non_rebalance_days = non_rebalance_mask[non_rebalance_mask].index
+        # Intersect with days that have a valid turnover value
+        check_days = non_rebalance_days.intersection(daily_turnover.index)
+
+        np.testing.assert_allclose(
+            daily_turnover.loc[check_days].values,
+            0.0,
+            atol=1e-10,
+            err_msg="Combined portfolio turnover should be zero on non-rebalance days",
+        )
 
 
 class TestPipelineOrderEnforcement:
