@@ -1304,6 +1304,95 @@ class TestPortfolioStudy:
         assert "ann_return" in d
         assert "max_drawdown" in d
 
+    def test_mode_b_prerun_studies(self):
+        """PortfolioStudy.run() accepts pre-run Study objects (Mode B).
+
+        When all strategies have already been run, PortfolioStudy should skip
+        _inject_data and study.run(), use the existing cache directly, and still
+        produce valid portfolio_returns. Study objects must not be mutated.
+        """
+        import pandas as pd
+
+        from qstudy import PortfolioStudy, Study
+
+        universe, benchmark = make_study_data(n_dates=150, n_tickers=20, seed=42)
+
+        study1 = (
+            Study(universe=universe, benchmark=benchmark, name="mr")
+            .base_signal(mr5)
+            .build_long_short(n_long=3, n_short=3)
+            .run()
+        )
+        study2 = (
+            Study(universe=universe, benchmark=benchmark, name="mom")
+            .base_signal(lambda **cache: cache["returns"].rolling(10).mean())
+            .build_long_only(n=5)
+            .run()
+        )
+
+        positions1_before = study1._cache["positions"].copy()
+        positions2_before = study2._cache["positions"].copy()
+
+        portfolio = (
+            PortfolioStudy(
+                strategies=[study1, study2],
+                universe=universe,
+                benchmark=benchmark,
+                name="prerun_portfolio",
+            )
+            .weight_equal()
+            .run()
+        )
+
+        assert portfolio.cache["portfolio_returns"] is not None
+        assert isinstance(portfolio.cache["portfolio_returns"], pd.Series)
+        assert portfolio.strategy_returns.shape[1] == 2
+        assert set(portfolio.strategy_returns.columns) == {"mr", "mom"}
+        # Study objects were not re-run — positions are identical to before
+        pd.testing.assert_frame_equal(study1._cache["positions"], positions1_before)
+        pd.testing.assert_frame_equal(study2._cache["positions"], positions2_before)
+
+    def test_mode_c_mixed_state_raises(self):
+        """PortfolioStudy.run() raises ValueError when strategies are mixed run state (Mode C)."""
+        from qstudy import PortfolioStudy, Study
+
+        universe, benchmark = make_study_data(n_dates=150, n_tickers=20, seed=42)
+
+        study1 = (
+            Study(universe=universe, benchmark=benchmark, name="mr")
+            .base_signal(mr5)
+            .build_long_short(n_long=3, n_short=3)
+            .run()
+        )
+        study2 = Study(name="mom").base_signal(mr5).build_long_only(n=5)
+
+        portfolio = PortfolioStudy(
+            strategies=[study1, study2], universe=universe, benchmark=benchmark
+        )
+        with pytest.raises(ValueError, match="mix of run and unrun strategies"):
+            portfolio.run()
+
+    def test_mode_b_incompatible_universes_raises(self):
+        """Mode B raises ValueError when pre-run studies have different date ranges."""
+        from qstudy import PortfolioStudy, Study
+
+        universe_a, benchmark = make_study_data(n_dates=150, n_tickers=20, seed=42)
+        universe_b, _ = make_study_data(n_dates=100, n_tickers=20, seed=99)
+
+        study1 = (
+            Study(universe=universe_a, benchmark=benchmark, name="mr")
+            .base_signal(mr5)
+            .build_long_short(n_long=3, n_short=3)
+            .run()
+        )
+        study2 = Study(universe=universe_b, name="mom").base_signal(mr5).build_long_only(n=5).run()
+
+        portfolio = PortfolioStudy(
+            strategies=[study1, study2], universe=universe_a, benchmark=benchmark
+        )
+        with pytest.raises(ValueError, match="different date index"):
+            portfolio.run()
+
 
 # ---------------------------------------------------------------------------
 # Transaction costs

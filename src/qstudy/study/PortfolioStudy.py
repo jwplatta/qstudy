@@ -339,18 +339,56 @@ class PortfolioStudy:
     def run(self) -> PortfolioStudy:
         """Execute all strategy pipelines, aggregate positions, and compute portfolio metrics.
 
+        Supports two execution modes based on the state of the passed strategies:
+
+        **Mode A — Unrun studies (default)**:
+            All strategies have not been run. PortfolioStudy injects shared universe/benchmark
+            and runs each strategy before collecting positions and returns.
+
+        **Mode B — Pre-run studies**:
+            All strategies have already been run. PortfolioStudy skips injection and execution,
+            validates that all studies share the same date index and ticker universe, then
+            proceeds directly to weighting.
+
+        **Mode C — Mixed (error)**:
+            Some strategies are run and some are not. Raises ``ValueError``.
+
         Steps:
-            1. Inject shared universe/benchmark data into each strategy.
-            2. Run each strategy's pipeline independently.
-            3. Collect per-strategy return streams.
-            4. Compute portfolio-level strategy weights.
-            5. Combine positions using weighted sum, then renormalize.
-            5a. (Optional) Fit neutralization factor model; populate factor_exposures cache.
-            5b. (Optional) Apply position scalers (scale_risk / neutralize_positions).
-            6. Run portfolio backtest engine.
-            7. Compute portfolio metrics.
-            8. (Optional) Fit factor model and run factor regression.
+            1. Detect mode; validate or inject+run accordingly.
+            2. Collect per-strategy return streams.
+            3. Compute portfolio-level strategy weights.
+            4. Combine positions using weighted sum, then renormalize.
+            4a. (Optional) Fit neutralization factor model; populate factor_exposures cache.
+            4b. (Optional) Apply position scalers (scale_risk / neutralize_positions).
+            5. Run portfolio backtest engine.
+            6. Compute portfolio metrics.
+            7. (Optional) Fit factor model and run factor regression.
         """
+        mode = self._detect_mode()
+
+        if mode == "mixed":
+            run_labels = [
+                study._name or f"strategy_{i}"
+                for i, study in enumerate(self._strategies)
+                if study._cache.get("portfolio_returns") is not None
+            ]
+            unrun_labels = [
+                study._name or f"strategy_{i}"
+                for i, study in enumerate(self._strategies)
+                if study._cache.get("portfolio_returns") is None
+            ]
+            raise ValueError(
+                f"PortfolioStudy.run() received a mix of run and unrun strategies. "
+                f"All strategies must be in the same state. "
+                f"Already run: {run_labels}. Not yet run: {unrun_labels}. "
+                f"Either run all strategies independently before passing them to "
+                f"PortfolioStudy, or pass unrun strategies and let PortfolioStudy "
+                f"inject data and run them."
+            )
+
+        if mode == "pre-run":
+            self._validate_prerun_compatibility()
+
         n_strategies = len(self._strategies)
         n_extra = (
             3
@@ -369,9 +407,12 @@ class PortfolioStudy:
         ) as pbar:
             for i, study in enumerate(self._strategies):
                 label = study._name or f"strategy_{i}"
-                pbar.set_postfix({"stage": f"run:{label}"})
-                study._inject_data(self._universe, self._benchmark)
-                study.run()
+                if mode == "unrun":
+                    pbar.set_postfix({"stage": f"run:{label}"})
+                    study._inject_data(self._universe, self._benchmark)
+                    study.run()
+                else:
+                    pbar.set_postfix({"stage": f"collect:{label}"})
                 strategy_returns[label] = study._cache["portfolio_returns"]
                 strategy_positions[label] = study._cache["positions"]
                 pbar.update(1)
@@ -587,6 +628,61 @@ class PortfolioStudy:
                 f"Replacing existing portfolio weighting scheme with '{label}'.", stacklevel=3
             )
         self._portfolio_weighting_fn = fn
+
+    def _detect_mode(self) -> str:
+        """Return "unrun", "pre-run", or "mixed" based on strategy run state.
+
+        Returns:
+            "unrun"   — all strategies have no portfolio_returns in cache (Mode A)
+            "pre-run" — all strategies have portfolio_returns in cache (Mode B)
+            "mixed"   — some strategies are run and some are not (Mode C)
+        """
+        states = [study._cache.get("portfolio_returns") is not None for study in self._strategies]
+        if all(states):
+            return "pre-run"
+        if not any(states):
+            return "unrun"
+        return "mixed"
+
+    def _validate_prerun_compatibility(self) -> None:
+        """Verify all pre-run studies share the same date index and ticker universe.
+
+        Checks ``study._cache["returns"].index`` (dates) and
+        ``study._cache["returns"].columns`` (tickers) across all strategies.
+
+        Raises:
+            ValueError: If any study's date index or ticker universe differs from
+                        the first study's.
+        """
+        reference = self._strategies[0]
+        ref_index = reference._cache["returns"].index
+        ref_columns = reference._cache["returns"].columns
+        ref_label = reference._name or "strategy_0"
+
+        for i, study in enumerate(self._strategies[1:], start=1):
+            label = study._name or f"strategy_{i}"
+            study_index = study._cache["returns"].index
+            study_columns = study._cache["returns"].columns
+
+            if not study_index.equals(ref_index):
+                raise ValueError(
+                    f"Pre-run study compatibility error: study '{label}' has a different "
+                    f"date index than '{ref_label}'. "
+                    f"'{ref_label}' spans {ref_index[0]} to {ref_index[-1]} "
+                    f"({len(ref_index)} dates), "
+                    f"'{label}' spans {study_index[0]} to {study_index[-1]} "
+                    f"({len(study_index)} dates). "
+                    f"All pre-run studies must share the same underlying universe."
+                )
+
+            if not study_columns.equals(ref_columns):
+                raise ValueError(
+                    f"Pre-run study compatibility error: study '{label}' has different "
+                    f"tickers than '{ref_label}'. "
+                    f"'{ref_label}' has {len(ref_columns)} tickers, "
+                    f"'{label}' has {len(study_columns)} tickers. "
+                    f"All pre-run studies must share the same underlying universe."
+                )
 
     def _require_run(self, method: str) -> None:
         if self._cache.get("portfolio_returns") is None:
