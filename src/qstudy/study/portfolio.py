@@ -153,12 +153,24 @@ def build_long_short_positions(
         Float DataFrame of weights (dates x tickers), dollar-neutral.
     """
     signal_rank = signal.rank(axis=1, ascending=False, na_option="bottom")
-    # rank has no NaNs after na_option='bottom', so count() == total columns every row
-    n_total = signal_rank.count(axis=1)
+    # Count tradeable tickers (non-NaN in original signal) to anchor the short cutoff.
+    # signal_rank has no NaNs (na_option='bottom' fills them with high rank numbers),
+    # so count() on signal_rank would return the full column count and place the short
+    # bucket in the NaN-ranked (non-tradeable) tail, leaving shorts empty.
+    n_tradeable = signal.count(axis=1)
 
     long_mask = signal_rank <= n_long
-    short_cutoff = n_total - (n_short - 1)
-    short_mask = signal_rank.ge(short_cutoff.values[:, None])
+    short_cutoff = n_tradeable - (n_short - 1)
+    # The cleaner alternative would be to rank only over tradeable tickers (drop NaN columns,
+    # rank, reindex back). That works when the tradeable universe is static, but breaks when
+    # it varies by date — a stock may be tradeable on some days and not others. Handling that
+    # per-row would require a date loop and lose the vectorized speedup.
+    # Instead we keep the full-universe rank and apply two guards:
+    #   1. short_cutoff anchored to n_tradeable so the boundary sits within the tradeable universe
+    #   2. & signal.notna() to explicitly exclude NaN-ranked tickers that satisfy rank >= cutoff
+    #      (na_option='bottom' gives them high ranks, so they would otherwise leak into the short book)
+    # Both guards are evaluated per cell/row, so a changing tradeable universe is handled correctly.
+    short_mask = signal_rank.ge(short_cutoff.values[:, None]) & signal.notna()
 
     positions = long_mask.astype(float) - short_mask.astype(float)
     abs_sum = positions.abs().sum(axis=1).replace(0, float("nan"))
