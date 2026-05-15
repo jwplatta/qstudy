@@ -70,6 +70,7 @@ class PortfolioStudy:
         benchmark: StudyData | None = None,
         name: str | None = None,
         cost_bps: float = 0.0,
+        verbose: bool = True,
     ) -> None:
         """
         Args:
@@ -79,6 +80,7 @@ class PortfolioStudy:
             universe:   :class:`~qstudy.data.loader.StudyData` for the trading universe.
             benchmark:  Optional benchmark (e.g. SPY) used for metrics and factor regression.
             name:       Label shown in the tqdm progress bar.
+            verbose:    If False, suppress the tqdm progress bar. Default True.
         """
         if not isinstance(universe, StudyData):
             raise TypeError(
@@ -93,6 +95,7 @@ class PortfolioStudy:
         self._benchmark = benchmark
         self._name = name
         self._cost_bps: float = float(cost_bps)
+        self._verbose: bool = verbose
 
         # Portfolio-level weighting (across strategies); default = equal
         self._portfolio_weighting_fn: Callable | None = None
@@ -404,6 +407,7 @@ class PortfolioStudy:
         with tqdm(
             total=n_strategies + n_extra,
             desc=self._name or "PortfolioStudy.run",
+            disable=not self._verbose,
         ) as pbar:
             for i, study in enumerate(self._strategies):
                 label = study._name or f"strategy_{i}"
