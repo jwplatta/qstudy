@@ -78,14 +78,13 @@ class TestBuildPositions:
         assert (pos > 0).sum(axis=1).eq(5).all(), "should have exactly 5 longs"
         assert (pos < 0).sum(axis=1).eq(5).all(), "should have exactly 5 shorts"
 
-    def test_nan_signal_ranked_last_becomes_short(self):
-        """na_option='bottom' ranks NaN signals last, so they land in the short bucket.
-        This matches the original notebook behavior: NaN = no view, ranked to the bottom,
-        and the short cutoff selects the bottom n_short ranks regardless."""
+    def test_nan_signal_excluded_from_short(self):
+        """NaN signals are ineligible — they must not appear in the short book.
+        The lowest-ranked *tradeable* ticker becomes the short instead."""
         dates = make_dates(2)
-        # 5 tickers, C is NaN — with n_long=1, n_short=1:
-        # ranks: A=1, B=2, D=3, E=4, C=5 (NaN pushed to bottom)
-        # short cutoff = 5 - (1-1) = 5, so rank >= 5 → C is short
+        # 5 tickers, C is NaN — tradeable universe is A, B, D, E (4 tickers)
+        # With n_long=1, n_short=1: A is long (rank 1), E is short (rank 4 of 4 tradeable)
+        # C must remain zero despite being ranked last by na_option='bottom'
         signal = pd.DataFrame(
             [[5.0, 3.0, np.nan, 1.0, 0.0]] * 2,
             index=dates,
@@ -93,8 +92,8 @@ class TestBuildPositions:
         )
         pos = build_long_short_positions(signal, n_long=1, n_short=1)
         assert (pos["A"] > 0).all(), "A has highest signal, should be long"
-        assert (pos["C"] < 0).all(), "C is NaN → ranked last → becomes the short"
-        assert (pos["E"] == 0).all(), "E is rank 4, above short cutoff of 5"
+        assert (pos["C"] == 0).all(), "C is NaN → ineligible → must not be short"
+        assert (pos["E"] < 0).all(), "E is lowest-ranked tradeable ticker, should be short"
 
     def test_short_cutoff_exact_match_original(self):
         """Verify short_cutoff = rank.count(axis=1) - (n_short - 1), matching original notebook.
@@ -121,9 +120,9 @@ class TestBuildPositions:
             rng.normal(0, 1, (5, 20)), index=dates, columns=[f"T{i}" for i in range(20)]
         )
         pos = build_long_short_positions(signal, n_long=5, n_short=5)
-        short_positions = pos[pos < 0]
-        assert not short_positions.empty, "should have short positions"
-        assert (short_positions < 0).all().all(), "all short positions must be strictly negative"
+        short_vals = pos.stack()[pos.stack() < 0]
+        assert not short_vals.empty, "should have short positions"
+        assert (short_vals < 0).all(), "all short positions must be strictly negative"
 
     def test_long_and_short_counts_do_not_cancel(self):
         """A ticker cannot be both long and short — positions must not cancel to zero.
@@ -142,7 +141,9 @@ class TestBuildPositions:
         )
         pos = build_long_short_positions(signal, n_long=3, n_short=3)
         # No position should be exactly zero (every ticker is either long or short)
-        assert (pos != 0).all().all(), "with n_long+n_short == n_tickers, all positions should be non-zero"
+        assert (pos != 0).all().all(), (
+            "with n_long+n_short == n_tickers, all positions should be non-zero"
+        )
         assert (pos > 0).sum(axis=1).eq(3).all(), "should have exactly 3 longs"
         assert (pos < 0).sum(axis=1).eq(3).all(), "should have exactly 3 shorts"
 
