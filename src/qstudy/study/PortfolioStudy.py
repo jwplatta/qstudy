@@ -142,6 +142,75 @@ class PortfolioStudy:
         self._renormalize_combined = True
         return self
 
+    def leverage(
+        self,
+        *,
+        fraction_kelly: float | None = None,
+        vol_target: float | None = None,
+        risk_free: float = 0.0,
+        kelly_window: int = 252,
+        vol_window: int = 63,
+        max_leverage: float = 5.0,
+    ) -> PortfolioStudy:
+        """Scale combined portfolio positions using Kelly-based or vol-targeting leverage.
+
+        Exactly one of ``fraction_kelly`` or ``vol_target`` must be provided.
+
+        The scaler is applied after sleeve positions are weighted and combined, so it
+        operates on the full portfolio position DataFrame.  All estimates use only
+        information available at ``t-1`` (no look-ahead).
+
+        Args:
+            fraction_kelly: Fraction of full Kelly leverage to apply (e.g. ``0.25``).
+                            Full Kelly is estimated from rolling realized return and vol:
+                            ``f* = (mu - risk_free) / sigma^2``.
+            vol_target:     Target annualized portfolio volatility (e.g. ``0.10`` for 10%).
+                            Positions are scaled so realized vol tracks the target.
+            risk_free:      Annual risk-free rate used in Kelly numerator. Default ``0.0``.
+            kelly_window:   Rolling window (days) for Kelly mean/vol estimates. Default ``252``.
+            vol_window:     Rolling window (days) for vol-target realized vol. Default ``63``.
+            max_leverage:   Hard cap on the scale factor. Default ``5.0``.
+        """
+        if (fraction_kelly is None) == (vol_target is None):
+            raise ValueError("Provide exactly one of fraction_kelly or vol_target.")
+        if fraction_kelly is not None and fraction_kelly <= 0:
+            raise ValueError(f"fraction_kelly must be positive, got {fraction_kelly}.")
+        if vol_target is not None and vol_target <= 0:
+            raise ValueError(f"vol_target must be positive, got {vol_target}.")
+
+        if fraction_kelly is not None:
+            fk = float(fraction_kelly)
+            rf = float(risk_free)
+            kw = int(kelly_window)
+            ml = float(max_leverage)
+
+            def _kelly_scaler(positions, **cache):
+                port_ret = (positions.shift(1) * cache["returns"]).sum(axis=1)
+                mu = port_ret.rolling(kw).mean() * 252
+                sigma2 = (port_ret.rolling(kw).std() * (252**0.5)) ** 2
+                full_kelly = (mu - rf) / sigma2.replace(0.0, float("nan"))
+                scale = (fk * full_kelly).clip(0, ml).shift(1).fillna(1.0)
+                return positions.mul(scale, axis=0)
+
+            _kelly_scaler.__name__ = f"leverage(fraction_kelly={fraction_kelly})"
+            self._position_scalers.append(_kelly_scaler)
+
+        else:
+            target = float(vol_target)
+            vw = int(vol_window)
+            ml = float(max_leverage)
+
+            def _vol_scaler(positions, **cache):
+                port_ret = (positions.shift(1) * cache["returns"]).sum(axis=1)
+                realized_vol = port_ret.rolling(vw).std() * (252**0.5)
+                scale = (target / realized_vol.replace(0.0, float("nan"))).clip(0, ml).shift(1)
+                return positions.mul(scale.fillna(1.0), axis=0)
+
+            _vol_scaler.__name__ = f"leverage(vol_target={vol_target})"
+            self._position_scalers.append(_vol_scaler)
+
+        return self
+
     def weight_equal(self) -> PortfolioStudy:
         """Equal weight across all strategy sleeves."""
         self._set_portfolio_weighting(apply_equal_strategies, "equal")
