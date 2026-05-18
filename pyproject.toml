@@ -1,7 +1,7 @@
 [project]
-name = "trade-lab"
+name = "qstudy"
 version = "0.1.0"
-description = "Trading analysis tools for indicators like GEX, trade analysis, and data visualization"
+description = "Simple library for unconstrainted backtests and quick strategy iteration."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
