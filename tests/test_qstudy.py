@@ -1341,6 +1341,64 @@ class TestPortfolioStudy:
         assert isinstance(m.sharpe_ratio, float)
         assert isinstance(m.information_ratio, float)
 
+    def test_leverage_vol_target_increases_exposure(self):
+        """leverage(vol_target=...) scales up positions when portfolio vol is low."""
+        portfolio_base, _, _ = self._make_portfolio()
+        portfolio_levered, _, _ = self._make_portfolio()
+        portfolio_base.weight_equal().run()
+        # Use a high vol_target to ensure scaling is applied upward on typical test data
+        portfolio_levered.weight_equal().leverage(vol_target=0.50).run()
+
+        base_abs = portfolio_base.cache["positions"].abs().mean().mean()
+        levered_abs = portfolio_levered.cache["positions"].abs().mean().mean()
+        assert levered_abs > base_abs
+
+    def test_leverage_kelly_scaler_registered(self):
+        """leverage(fraction_kelly=...) registers a scaler that is applied during run()."""
+        portfolio, _, _ = self._make_portfolio()
+        portfolio.leverage(fraction_kelly=0.25)
+        # The scaler should appear in _position_scalers
+        names = [getattr(fn, "__name__", "") for fn in portfolio._position_scalers]
+        assert any("fraction_kelly" in n for n in names)
+
+    def test_leverage_kelly_run_completes(self):
+        """leverage(fraction_kelly=...) runs without error and produces a return series."""
+        portfolio, _, _ = self._make_portfolio(n_dates=300)
+        portfolio.weight_equal().leverage(fraction_kelly=0.25).run()
+        ret = portfolio.cache["portfolio_returns"]
+        assert isinstance(ret, pd.Series)
+        assert len(ret) > 0
+
+    def test_leverage_returns_self(self):
+        """leverage() returns PortfolioStudy for fluent chaining."""
+        portfolio, _, _ = self._make_portfolio()
+        result = portfolio.leverage(vol_target=0.10)
+        assert result is portfolio
+
+    def test_leverage_requires_exactly_one_arg(self):
+        """leverage() raises ValueError when both or neither args are provided."""
+        portfolio, _, _ = self._make_portfolio()
+        with pytest.raises(ValueError, match="exactly one"):
+            portfolio.leverage(fraction_kelly=0.25, vol_target=0.10)
+        portfolio2, _, _ = self._make_portfolio()
+        with pytest.raises(ValueError, match="exactly one"):
+            portfolio2.leverage()
+
+    def test_leverage_invalid_values_raise(self):
+        """leverage() raises ValueError for non-positive fraction_kelly or vol_target."""
+        p1, _, _ = self._make_portfolio()
+        with pytest.raises(ValueError):
+            p1.leverage(fraction_kelly=0.0)
+        p2, _, _ = self._make_portfolio()
+        with pytest.raises(ValueError):
+            p2.leverage(fraction_kelly=-0.5)
+        p3, _, _ = self._make_portfolio()
+        with pytest.raises(ValueError):
+            p3.leverage(vol_target=0.0)
+        p4, _, _ = self._make_portfolio()
+        with pytest.raises(ValueError):
+            p4.leverage(vol_target=-0.1)
+
     def test_data_injection_strategies_no_universe(self):
         """Strategies initialized without universe run correctly via PortfolioStudy."""
         from qstudy import PortfolioStudy, Study
