@@ -80,7 +80,11 @@ def download(
     chunk_size = 100
     chunks = [tickers[i : i + chunk_size] for i in range(0, len(tickers), chunk_size)]
     all_frames: dict[str, list[pd.DataFrame]] = {
-        "Close": [], "Open": [], "High": [], "Low": [], "Volume": []
+        "Close": [],
+        "Open": [],
+        "High": [],
+        "Low": [],
+        "Volume": [],
     }
 
     for chunk in chunks:

@@ -131,9 +131,7 @@ def read_iteration_index_rows(experiment_dir: Path) -> list[dict[str, Any]]:
     try:
         payload = json.loads(index_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
-        raise QStudyCliError(
-            f"Malformed iteration index JSON in {index_path}: {exc.msg}"
-        ) from exc
+        raise QStudyCliError(f"Malformed iteration index JSON in {index_path}: {exc.msg}") from exc
 
     if payload == []:
         return []
