@@ -52,13 +52,7 @@ def corr_regime_scale(positions, **cache):
     """
     returns = cache["returns"]
     corr_window = 20
-    avg_corr = (
-        returns.rolling(corr_window)
-        .corr()
-        .groupby(level=0)
-        .mean()
-        .mean(axis=1)
-    )
+    avg_corr = returns.rolling(corr_window).corr().groupby(level=0).mean().mean(axis=1)
     corr_thresh = avg_corr.rolling(60).quantile(0.8)
     scale = pd.Series(
         np.where(avg_corr < corr_thresh, 1.0, 0.25),

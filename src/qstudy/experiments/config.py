@@ -71,9 +71,7 @@ def _parse_config_text(text: str, config_path: Path) -> dict[str, str | None]:
             raise ConfigError(f"Invalid config in {config_path}:{lineno}: expected key = value")
         key, value = (part.strip() for part in line.split("=", 1))
         if key not in {"studies_dir", "data_dir"}:
-            raise ConfigError(
-                f"Invalid config in {config_path}:{lineno}: unsupported key {key!r}"
-            )
+            raise ConfigError(f"Invalid config in {config_path}:{lineno}: unsupported key {key!r}")
         if key == "studies_dir":
             if studies_dir is not None:
                 raise ConfigError(
@@ -120,6 +118,4 @@ def _strip_toml_comment(line: str) -> str:
 def _parse_toml_string(value: str, config_path: Path, lineno: int, key: str) -> str:
     if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
         return value[1:-1]
-    raise ConfigError(
-        f"Invalid config in {config_path}:{lineno}: {key} must be a quoted string"
-    )
+    raise ConfigError(f"Invalid config in {config_path}:{lineno}: {key} must be a quoted string")

@@ -982,7 +982,9 @@ class Study:
         self._cache["_cost_bps_config"] = self._cost_bps
 
         stages = self._build_stage_list()
-        with tqdm(total=len(stages), desc=self._name or "Study.run", disable=not self._verbose) as pbar:
+        with tqdm(
+            total=len(stages), desc=self._name or "Study.run", disable=not self._verbose
+        ) as pbar:
             # Stage: fit factor model (optional, must run before residualize)
             if self._factor_model is not None:
                 pbar.set_postfix({"stage": "factor_model"})

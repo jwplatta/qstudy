@@ -1,9 +1,21 @@
 [project]
 name = "qstudy"
 version = "0.1.0"
-description = "Simple library for unconstrainted backtests and quick strategy iteration."
+description = "Backtesting tools for fast cross-sectional equity research and experiment iteration."
 readme = "README.md"
 requires-python = ">=3.10"
+authors = [{ name = "Joseph Platta", email = "jwplatta@gmail.com" }]
+license = "MIT"
+keywords = ["quant", "backtesting", "equities", "research", "systematic-trading"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Topic :: Office/Business :: Financial :: Investment",
+]
 dependencies = [
     "backtrader>=1.9.78.123",
     "ipykernel>=7.1.0",
@@ -24,6 +36,11 @@ dependencies = [
     "fredapi",
     "tqdm>=4.67.3",
 ]
+
+[project.urls]
+Homepage = "https://github.com/jwplatta/qstudy"
+Repository = "https://github.com/jwplatta/qstudy"
+Issues = "https://github.com/jwplatta/qstudy/issues"
 
 [project.scripts]
 qstudy = "qstudy.cli:main"

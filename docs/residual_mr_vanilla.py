@@ -32,9 +32,8 @@ dates = pd.bdate_range("2020-01-01", periods=N_DATES)
 tickers = [f"T{i:02d}" for i in range(N_TICKERS)]
 
 mkt = rng.normal(0, 0.01, N_DATES)
-returns_arr = (
-    mkt[:, None] * rng.uniform(0.5, 1.5, N_TICKERS)[None, :]
-    + rng.normal(0, 0.005, (N_DATES, N_TICKERS))
+returns_arr = mkt[:, None] * rng.uniform(0.5, 1.5, N_TICKERS)[None, :] + rng.normal(
+    0, 0.005, (N_DATES, N_TICKERS)
 )
 returns_df = pd.DataFrame(returns_arr, index=dates, columns=tickers)
 close_df = (1 + returns_df).cumprod() * 100
@@ -111,8 +110,8 @@ avg_dollar_vol = dollar_vol.rolling(30).mean()
 rank = avg_dollar_vol.rank(axis=1, ascending=False)
 liq_mask = rank <= 15
 
-signal = signal.where(liq_mask)           # NaN ineligible stocks (not 0.0)
-ret_filtered = returns_df.where(liq_mask) # mask returns for backtest
+signal = signal.where(liq_mask)  # NaN ineligible stocks (not 0.0)
+ret_filtered = returns_df.where(liq_mask)  # mask returns for backtest
 
 # ---------------------------------------------------------------------------
 # 8. Build long/short positions

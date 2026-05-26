@@ -1,172 +1,76 @@
-# Contributing to This Project
+# Contributing to qstudy
 
-This document outlines the workflow for contributing to this repository. Following these guidelines helps maintain code quality and a smooth development process for everyone.
-
-## Before Starting Any Task
-
-**Read this section first.** This applies to all contributors, including AI coding agents.
-
-1. **Read this entire document** before making any changes
-2. **Create a worktree** (not just a branch) for your work - see [Creating a Worktree](#creating-a-worktree)
-3. **Never commit directly to main** - all changes go through pull requests
-4. **Clean up after merge** - remove your worktree and local branch
+This repository is centered on the `qstudy` package in `src/qstudy/`. Keep core logic in the
+library package unless a change explicitly belongs in `docs/` or test fixtures.
 
 ## Requirements
-- Python 3.12+
+
+- Python `3.10+`
 - `git`
-- `uv` package manager
+- `uv`
 - `pytest`
 - `ruff`
-- A GitHub account with push access to a fork or the main repository.
-- (Optional) GitHub CLI (`gh`) for creating pull requests.
+- `mypy`
 
-## Project Setup (One-Time)
+## Working Rules
 
-If you are setting up the project for the first time on your main worktree:
+1. Read `AGENTS.md` before making substantial changes.
+2. Use a Git worktree for each task.
+3. Never commit directly to `main`.
+4. Use a branch prefixed with `feature/`, `fix/`, or `chore/`.
+5. Keep PRs focused and covered by tests when practical.
 
-1.  **Initialize the project with `uv`**:
-    ```bash
-    uv init --python 3.12
-    uv add --dev pytest ruff
-    ```
-2.  **Sync dependencies**:
-    ```bash
-    uv sync
-    ```
+## Setup
 
-## Branch Naming Conventions
-
-All branches MUST start with one of the following prefixes:
-- `feature/*`
-- `fix/*`
-- `chore/*`
-
-**Examples:**
-- `feature/add-export-feature`
-- `fix/resolve-null-pointer-issue`
-- `chore/update-dependencies`
-
-## Development Workflow
-
-To ensure that work is isolated and does not conflict with others, you MUST use git worktrees. Each feature or fix should be developed in its own worktree and branch. Do not create branches directly in the main repository clone.
-
-### Creating a Worktree
-
-From your main repository clone:
-
-1.  **Fetch the latest changes from the remote repository**:
-    ```bash
-    git fetch origin
-    ```
-
-2.  **Create a new worktree and branch for your task**:
-    ```bash
-    git worktree add ../<worktree-name> -b <branch-name> origin/main
-    ```
-    For example:
-    ```bash
-    git worktree add ../wt-new-feature -b feature/add-new-feature origin/main
-    ```
-
-### Daily Workflow Steps
-
-1.  **Navigate to your worktree directory**:
-    ```bash
-    cd ../<worktree-name>
-    ```
-
-2.  **Sync dependencies**:
-    ```bash
-    uv sync
-    ```
-
-3.  **Implement your changes**:
-    - Modify the source code in the `src/` directory.
-    - Add or update tests in the `tests/` directory to cover your changes.
-
-4.  **Format and lint your code before committing**:
-    ```bash
-    uv run ruff format .
-    uv run ruff check . --fix
-    ```
-
-5.  **Run all unit tests to ensure nothing has broken**:
-    ```bash
-    uv run pytest
-    ```
-
-## Commit Rules
-
-Use conventional commits. No attributions. Commit messages should be concise and clear.
-
-- Keep the subject line short (one line).
-- Start the message with a verb that describes the action taken.
-- Clearly describe the purpose of the change.
-
-**Good Examples:**
-- `Add CSV export functionality`
-- `Fix crash when input is empty`
-- `Refactor data parsing logic`
-- `Update project dependencies`
-
-**Committing your work:**
 ```bash
-git add -A
-git commit -m "Your descriptive commit message"
+git clone https://github.com/jwplatta/qstudy.git
+cd qstudy
+uv sync
 ```
 
-## Pushing and Opening a Pull Request
+## Create a Worktree
 
-1.  **Push your branch to the remote repository**:
-    ```bash
-    git push -u origin HEAD
-    ```
+From the main clone:
 
-2.  **Open a pull request**:
-    - You can use the GitHub CLI:
-      ```bash
-      gh pr create --base main --fill
-      ```
-    - Alternatively, you can open a pull request through the GitHub web interface.
+```bash
+git fetch origin
+git worktree add ../wt-my-task -b chore/my-task origin/main
+cd ../wt-my-task
+uv sync
+```
 
-## Keeping Your Branch Updated
+## Development Checklist
 
-If the `main` branch has been updated while you were working, you should update your branch:
+1. Make changes in `src/qstudy/` unless the task clearly targets docs or tests.
+2. Add or update tests in `tests/` for behavioral changes.
+3. Run formatting, linting, and tests before committing.
 
-1.  **Fetch the latest changes and rebase your branch**:
-    ```bash
-    git fetch origin
-    git rebase origin/main
-    ```
+```bash
+uv run ruff format .
+uv run ruff check . --fix
+uv run mypy src/
+uv run pytest
+```
 
-2.  **Re-run all checks to ensure compatibility**:
-    ```bash
-    uv run ruff format .
-    uv run ruff check . --fix
-    uv run pytest
-    ```
+## Project Conventions
 
-## Cleaning Up After Your PR is Merged
+- Prefer reusable library code over one-off scripts.
+- Signal filters should exclude assets with `NaN`, not `0.0`.
+- The engine applies a 1-day execution lag from positions to returns.
+- Public APIs should be re-exported from `src/qstudy/__init__.py` when appropriate.
 
-Once your pull request has been merged, you can clean up your local environment.
+## Commits and Pull Requests
 
-From your main worktree:
+- Use concise, action-oriented commit messages.
+- Push your branch with `git push -u origin HEAD`.
+- Open a PR against `main`.
+- Rebase onto `origin/main` if the branch falls behind.
 
-1.  **Remove the worktree**:
-    ```bash
-    git worktree remove ../<worktree-name>
-    ```
+## Cleanup After Merge
 
-2.  **Delete the local feature branch**:
-    ```bash
-    git branch -d <branch-name>
-    ```
+From the main clone:
 
-## Core Principles
-
-- **Isolate Your Work**: One feature/fix = one worktree = one branch = one PR.
-- **Don't Share Branches**: Never share a feature branch with another contributor.
-- **Check Your Work**: Always run `ruff` and `pytest` before committing.
-- **Small, Focused PRs**: Keep pull requests small and focused on a single issue.
-- **Test Your Code**: Tests should cover the core behavior of your changes.
-- **Don't Push Broken Code**: Ensure tests and linting pass before pushing.
+```bash
+git worktree remove ../wt-my-task
+git branch -d chore/my-task
+```

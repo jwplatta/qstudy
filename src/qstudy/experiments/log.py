@@ -89,7 +89,5 @@ def read_log_entries(experiment_dir: Path) -> list[dict[str, Any]]:
     if payload == []:
         return []
     if not isinstance(payload, list) or not all(isinstance(row, dict) for row in payload):
-        raise QStudyCliError(
-            f"Malformed log JSON in {log_path}: expected a list of objects"
-        )
+        raise QStudyCliError(f"Malformed log JSON in {log_path}: expected a list of objects")
     return [dict(row) for row in payload]
