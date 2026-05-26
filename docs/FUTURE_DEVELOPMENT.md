@@ -25,6 +25,73 @@ Recommended follow-up:
 - Convert the core scenario into a focused pytest case in `tests/`.
 - Keep it as test data, not as a standalone script.
 
+Exact bug-demo code worth preserving:
+
+```python
+import numpy as np
+import pandas as pd
+
+dates = pd.date_range("2024-01-01", periods=6, freq="B")
+
+prices = pd.DataFrame(
+    {
+        "AAPL": [100, 103, 107, 112, 118, 125],
+        "MSFT": [100, 101, 102, 103, 104, 105],
+        "GOOG": [100, 99, 98, 97, 96, 95],
+        "META": [100, 96, 91, 85, 78, 70],
+        "PENNY1": [1.00, 1.01, 0.99, 1.02, 0.98, 1.00],
+        "PENNY2": [0.50, 0.51, 0.49, 0.52, 0.48, 0.50],
+        "PENNY3": [2.00, 2.01, 1.99, 2.02, 1.98, 2.00],
+        "TINY1": [3.00, 3.01, 2.99, 3.02, 2.98, 3.00],
+        "TINY2": [0.10, 0.11, 0.09, 0.12, 0.08, 0.10],
+        "TINY3": [0.25, 0.26, 0.24, 0.27, 0.23, 0.25],
+    },
+    index=dates,
+)
+
+returns_1d = prices.pct_change(periods=1)
+
+tradeable = pd.Series(
+    {t: True for t in ["AAPL", "MSFT", "GOOG", "META"]}
+    | {t: False for t in ["PENNY1", "PENNY2", "PENNY3", "TINY1", "TINY2", "TINY3"]}
+)
+
+signal_df = -returns_1d
+signal_df.loc[:, ~tradeable] = np.nan
+
+n_long = 2
+n_short = 2
+
+signal_rank = signal_df.rank(axis=1, ascending=False, na_option="bottom")
+
+# Buggy logic: count() runs on the ranked frame after NaNs have been pushed to the bottom.
+# That makes n_total equal to the full column count, so the short cutoff lands on the
+# non-tradeable NaN names instead of the true short candidates.
+n_total_buggy = signal_rank.count(axis=1)
+short_cutoff_buggy = n_total_buggy - (n_short - 1)
+
+long_mask = signal_rank <= n_long
+short_mask_buggy = signal_rank.ge(short_cutoff_buggy.values[:, None])
+positions_buggy = long_mask.astype(float) - short_mask_buggy.astype(float)
+
+# Fixed logic: count tradeable names from the original signal, then explicitly require
+# signal.notna() so bottom-ranked NaN assets cannot leak into the short book.
+n_tradeable_count = signal_df.count(axis=1)
+short_cutoff_fixed = n_tradeable_count - (n_short - 1)
+
+short_mask_fixed = signal_rank.ge(short_cutoff_fixed.values[:, None]) & signal_df.notna()
+positions_fixed = long_mask.astype(float) - short_mask_fixed.astype(float)
+abs_sum = positions_fixed.abs().sum(axis=1).replace(0, float("nan"))
+positions_fixed = positions_fixed.div(abs_sum, axis=0)
+```
+
+Behavior to preserve in tests:
+
+- The buggy version can produce an empty short book because the short cutoff is
+  anchored to the full ranked column count rather than the tradeable universe.
+- The fixed version must select shorts only from `signal.notna()` assets and
+  must produce both longs and shorts when enough tradeable names exist.
+
 ### Gamma regime diagnostics utilities
 
 Source removed:
