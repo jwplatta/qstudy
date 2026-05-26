@@ -6,6 +6,7 @@ It gives you a compact pipeline for:
 - downloading and caching market data
 - building signals and eligibility filters
 - constructing long/short or long-only portfolios
+- combining multiple strategies into a portfolio-level backtest
 - running lag-aware backtests
 - summarizing results and parameter sweeps
 
@@ -67,6 +68,10 @@ The typical `qstudy` flow is:
 5. Run the engine, which applies a 1-day execution lag to returns.
 6. Review metrics, charts, and parameter sweep results.
 
+For multi-strategy research, `PortfolioStudy` combines several configured `Study`
+pipelines into one shared portfolio run with strategy-level weighting and optional
+portfolio-level leverage.
+
 ## Usage Illustration
 
 ### Functional API
@@ -110,6 +115,54 @@ study = (
 study.report()
 ```
 
+### PortfolioStudy
+
+```python
+import qstudy as qs
+from qstudy import PortfolioStudy, Study
+from qstudy.constants import SP500
+
+universe = qs.download(SP500, start="2015-01-01", end="2024-12-31")
+benchmark = qs.download(["SPY"], start="2015-01-01", end="2024-12-31")
+
+mr = (
+    Study(name="mean_reversion")
+    .mean_reversion(window=5)
+    .add_liquidity_filter(top_n=250)
+    .build_long_short(n_long=25, n_short=25, rebalance_every=5)
+)
+
+mom = (
+    Study(name="momentum")
+    .momentum(window=90)
+    .add_liquidity_filter(top_n=250)
+    .build_long_only(n=20, rebalance_every=5)
+)
+
+portfolio = (
+    PortfolioStudy(
+        strategies=[mr, mom],
+        universe=universe,
+        benchmark=benchmark,
+        name="mr_plus_momentum",
+    )
+    .weight_equal()
+    .fully_invest()
+    .leverage(vol_target=0.12)
+    .run()
+)
+
+print(portfolio.metrics_dict())
+portfolio.report()
+```
+
+`PortfolioStudy` is the right abstraction when you want to:
+
+- run multiple `Study` sleeves against the same shared universe and benchmark
+- weight sleeves with `weight_equal()`, `weight_equal_vol()`, `weight_equal_sharpe()`, or `weight_optimal()`
+- fully invest or rescale the combined book with `fully_invest()` and `leverage()`
+- inspect cross-strategy relationships via `portfolio.strategy_returns` and `portfolio.strategy_corr`
+
 ## CLI Experiment Workflow
 
 `qstudy` also includes an experiment scaffolding CLI:
@@ -142,7 +195,7 @@ data_dir = "./.qstudy-data"
 ## Documentation
 
 - [Study quickstart](docs/STUDY_QUICKSTART.md)
-- [Old code index](docs/OLD_CODE_INDEX.md)
+- [Combined portfolio example](docs/combined_portfolio_study.py)
 
 ## Development
 
