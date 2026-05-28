@@ -74,7 +74,7 @@ portfolio-level leverage.
 
 ## Usage Illustration
 
-### Functional API
+### Functional
 
 ```python
 import qstudy as qs
@@ -92,7 +92,7 @@ portfolio_returns = qs.run(positions, data.returns.where(liq_mask))
 print(qs.metrics.summary(portfolio_returns, positions))
 ```
 
-### Study API
+### Study
 
 ```python
 import qstudy as qs
