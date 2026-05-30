@@ -1,39 +1,24 @@
-# qstudy CLI
+# qstudy Experiments CLI
 
-The `qstudy` CLI manages experiment folders for multi-version studies.
+The `qstudy` CLI is the experiment-management layer for the library. It scaffolds study folders, creates versioned iterations, runs one or more `run_study()` modules, and stores two different kinds of output:
 
-Current commands:
+- raw run artifacts in `out/`
+- researcher notes plus selected metrics in `log.json`
 
-- `qstudy create <name>`
-- `qstudy iterate <study> <version-name>`
-- `qstudy run <name>`
-- `qstudy list`
-- `qstudy show-results <name>`
+The implementation lives in [`src/qstudy/experiments/`](/Users/jplatta/repos/qstudy/src/qstudy/experiments) and the command entrypoint is [`src/qstudy/cli.py`](/Users/jplatta/repos/qstudy/src/qstudy/cli.py).
 
----
+## Feature Review
 
-## Install
+The current experiments feature is intentionally small and file-based:
 
-From the repository root:
+- `qstudy create` generates a runnable experiment scaffold.
+- `qstudy iterate` copies an existing `v*.py` file into the next numeric version.
+- `qstudy run` executes one or more version files and writes timestamped artifacts to `out/`.
+- `qstudy log-study` appends annotated results to `log.json`.
+- `qstudy show-results` renders a summary table from `log.json`.
+- `qstudy query` sorts logged results by a supported metric alias.
 
-```bash
-uv sync
-```
-
-That installs the project into the local `uv` environment and exposes the console script defined in [pyproject.toml](../pyproject.toml).
-
-Run the CLI with `uv run`:
-
-```bash
-uv run qstudy list
-uv run qstudy create my-experiment
-uv run qstudy iterate my-experiment volume-confirmed
-uv run qstudy run my-experiment
-uv run qstudy run my-experiment --version v1_volume_confirmed
-uv run qstudy show-results my-experiment
-```
-
----
+The key design choice is that `run` and `log-study` are separate steps. Running a study does not update `log.json` for you. If you want a version to appear in `show-results` or `query`, you need to log it explicitly.
 
 ## Config
 
@@ -41,39 +26,46 @@ The CLI looks for `.qstudy.toml` in this order:
 
 1. `.qstudy.toml` in the current working directory
 2. `~/.qstudy.toml`
-3. fallback to the current working directory as the studies root
+3. fallback to the current working directory as `studies_root`
 
-Supported config:
+Supported keys:
 
 ```toml
 studies_dir = "experiments"
+data_dir = ".qstudy-data"
 ```
 
 Rules:
 
-- `studies_dir` may be absolute or relative
-- if loaded from a local `.qstudy.toml`, relative paths resolve from that file's directory
-- if loaded from `~/.qstudy.toml`, relative paths resolve from your home directory
+- `studies_dir` is required if a config file exists
+- `data_dir` is optional
+- relative paths resolve relative to the config file that defined them
+- if no config file exists, studies are created directly under the current working directory
 
-Example local config:
+Example:
 
 ```toml
 studies_dir = "experiments"
+data_dir = ".qstudy-data"
 ```
 
-With that file in the repo root, `uv run qstudy create alpha` creates:
+With that file in the repo root:
+
+```bash
+uv run qstudy create residual-mr
+```
+
+creates:
 
 ```text
-experiments/alpha/
+experiments/residual-mr/
 ```
-
----
 
 ## Commands
 
-## `qstudy create <name>`
+### `qstudy create <name>`
 
-Creates a runnable experiment scaffold under the configured studies root.
+Creates a new experiment directory under `studies_root`.
 
 Example:
 
@@ -81,51 +73,166 @@ Example:
 uv run qstudy create residual-mr
 ```
 
-Generated files:
+Generated scaffold:
 
-- `v0.py`
-- `run.py`
-- `shared.py`
-- `iteration_index.json`
-- `results.json`
-- `results.csv`
-- `log.md`
-- `readme.md`
+```text
+residual-mr/
+  shared.py
+  v0.py
+  run.py
+  iteration_index.json
+  log.json
+  readme.md
+```
 
 Behavior:
 
-- fails if the experiment directory already exists
+- rejects duplicate experiment directories
+- validates that `<name>` is a single path segment
 - initializes `iteration_index.json` with the baseline `v0.py` entry
-- initializes `results.json` as an empty JSON array
-- initializes `results.csv` as an empty but valid CSV artifact
+- initializes `log.json` as `[]`
 
-## `qstudy iterate <study> <version-name>`
+### `qstudy iterate <study> <version-name> [--parent <stem>]`
 
-Creates the next top-level version file by copying the highest existing version file.
+Creates the next top-level version file by copying an existing version file.
 
 Example:
 
 ```bash
 uv run qstudy iterate residual-mr volume-confirmed
-```
-
-If the highest existing version is `v0.py`, the command creates:
-
-```text
-v1_volume_confirmed.py
+uv run qstudy iterate residual-mr vol-filter --parent v1_volume_confirmed
 ```
 
 Behavior:
 
-- resolves `<study>` under the configured studies root
-- picks the highest existing numeric version file; if several files share that number, lexicographic filename order breaks the tie
-- normalizes `<version-name>` into a safe suffix like `volume_confirmed`
-- copies the source file and updates obvious embedded version labels when they directly reference the prior stem
-- appends metadata to `iteration_index.json`
+- finds the experiment under `studies_root`
+- defaults to branching from the highest existing `v*.py` file
+- supports branching from an explicit parent with `--parent`
+- always assigns the next numeric version: if the highest version is `v10_*`, the next file is `v11_*`
+- normalizes `<version-name>` into a lowercase underscore suffix
+- rewrites obvious embedded version labels such as docstrings, `STUDY_NAME`, and `Study(name=...)`
+- appends lineage metadata to `iteration_index.json`
 
-## `qstudy list`
+Notes:
 
-Lists top-level experiment directories and counts top-level `v*.py` files in each one.
+- execution discovers actual `v*.py` files on disk; `iteration_index.json` is metadata, not the execution source of truth
+- if `iteration_index.json` is missing, it is rebuilt from the discovered version files
+
+### `qstudy run <name> [--version <stem-or-filename>]`
+
+Runs one or all version files in an experiment.
+
+Examples:
+
+```bash
+uv run qstudy run residual-mr
+uv run qstudy run residual-mr --version v1_volume_confirmed
+uv run qstudy run residual-mr --version v1_volume_confirmed.py
+```
+
+Behavior:
+
+- discovers top-level `v*.py` files and sorts them numerically
+- prepends the experiment directory to `sys.path`, so version files can import `shared.py`
+- imports each selected module dynamically
+- requires each module to define `run_study()`
+- requires `run_study()` to return a `dict`
+- prints one JSON object per version to stdout
+- writes one timestamped raw artifact per version into `out/`
+
+Example stdout for one version:
+
+```json
+{
+  "version": "v0",
+  "run_at": "2026-05-29T12:34:56Z",
+  "metrics": {
+    "sharpe": 1.1,
+    "ann_return": 0.2
+  }
+}
+```
+
+Important:
+
+- `qstudy run` does not write `log.json`
+- `qstudy run` does not aggregate results into `results.json` or `results.csv`
+- `run.py` is just a local wrapper around the same `run_experiment(...)` path
+
+### `qstudy log-study <name> --version ... --hypothesis ... --analysis ... --results ... [--parent ...]`
+
+Appends an annotated entry to `log.json`.
+
+Example:
+
+```bash
+uv run qstudy log-study residual-mr \
+  --version v1_volume_confirmed \
+  --hypothesis "Add a volume confirmation filter to reduce weak reversals" \
+  --analysis "Sharpe improved while turnover fell; drawdown stayed similar." \
+  --results '{"net_sharpe": 0.81, "ann_return": 0.11}'
+```
+
+Behavior:
+
+- requires a JSON object for `--results`
+- stores `version`, `ancestor`, `hypothesis`, `metrics`, `analysis`, and `run_at`
+- infers `ancestor` from `iteration_index.json` when `--parent` is omitted and the version exists there
+
+Use this command after `qstudy run` when you want a durable research log that can be rendered and queried later.
+
+### `qstudy show-results <name>`
+
+Reads `log.json` and renders a summary table.
+
+Example:
+
+```bash
+uv run qstudy show-results residual-mr
+```
+
+Default columns are drawn from logged metrics and may include:
+
+- `version`
+- `ancestor`
+- `metrics.net_sharpe`
+- `metrics.ann_return`
+- `metrics.ann_vol`
+- `metrics.max_drawdown`
+- `metrics.information_ratio`
+- `metrics.avg_daily_turnover`
+
+If no entries have been logged yet, the CLI prints `No results have been recorded yet.`.
+
+### `qstudy query <name> --metric <alias> [--sort asc|desc|--min|--max]`
+
+Sorts `log.json` entries by a supported metric alias.
+
+Example:
+
+```bash
+uv run qstudy query residual-mr --metric net-sharpe --max
+uv run qstudy query residual-mr --metric turnover --min
+```
+
+Supported metric aliases:
+
+- `sharpe`
+- `net-sharpe`
+- `gross-sharpe`
+- `return`
+- `vol`
+- `drawdown`
+- `turnover`
+- `bench-corr`
+- `ir`
+- `benchmark-sharpe`
+
+Rows missing the requested metric are pushed to the end.
+
+### `qstudy list`
+
+Lists experiment directories and counts top-level `v*.py` files.
 
 Example:
 
@@ -144,149 +251,130 @@ momentum-test  1
 
 Only top-level version files count. Nested files are ignored.
 
-## `qstudy run <name>`
+## Experiment Layout
 
-Runs all top-level `v*.py` files in the named experiment and writes `results.json` plus `results.csv`.
+The scaffold is small by design:
 
-Example:
+- `shared.py`: cached data loaders, constants, and helper signal functions reused across versions
+- `v0.py`: baseline implementation with `run_study() -> dict`
+- `vN_<label>.py`: later iterations created by `qstudy iterate`
+- `run.py`: wrapper around `qstudy.experiments.run_experiment`
+- `iteration_index.json`: lineage metadata for iterated versions
+- `log.json`: researcher log for annotated results
+- `out/`: timestamped raw metrics from `qstudy run`
 
-```bash
-uv run qstudy run residual-mr
-uv run qstudy run residual-mr --version v1_volume_confirmed
-```
+The generated starter baseline uses:
 
-Behavior:
+- `SP500` as the default universe
+- `SPY` as the default benchmark
+- a simple mean-reversion starter signal
+- `Study(...).base_signal(...).build_long_short(...).run()`
 
-- resolves `<name>` under the configured studies root
-- uses the same execution path as the generated `run.py`
-- accepts `--version <stem-or-filename>` to run exactly one version
-- prints how many study versions were run
-- overwrites `results.json` and `results.csv` with exactly the versions that were run
-
-## `qstudy show-results <name>`
-
-Reads `<experiment>/results.json` and prints a terminal summary table.
-
-Example:
-
-```bash
-uv run qstudy show-results residual-mr
-```
-
-Default displayed columns:
-
-- `version`
-- `sharpe`
-- `ann_return`
-- `ann_vol`
-- `max_drawdown`
-- `information_ratio`
-- `avg_daily_turnover`
-
-If a metric is absent in every row, that column is omitted from the table.
-
-If `results.json` is empty, the CLI prints a clear message instead of failing.
-
----
-
-## Experiment Workflow
-
-Typical flow:
+## Typical Workflow
 
 ```bash
 uv run qstudy create residual-mr
+uv run qstudy run residual-mr --version v0
+uv run qstudy log-study residual-mr \
+  --version v0 \
+  --hypothesis "Baseline mean reversion" \
+  --analysis "Runnable baseline; establishes control metrics." \
+  --results '{"net_sharpe": 0.68, "ann_return": 0.07}'
 uv run qstudy iterate residual-mr volume-confirmed
-uv run qstudy run residual-mr
+uv run qstudy run residual-mr --version v1_volume_confirmed
 uv run qstudy show-results residual-mr
+uv run qstudy query residual-mr --metric net-sharpe --max
 ```
 
-What to edit:
+## Artifacts
 
-- `shared.py`: shared dates, benchmark, universe loader, and starter signal helpers
-- `v0.py`: baseline study with `run_study() -> dict`
-- future `v*.py` files created by `qstudy iterate`
-- `iteration_index.json`: append-only lineage metadata for iterations
+### `out/<timestamp>_<version>.json`
 
-What `run.py` does:
+Written by `qstudy run`.
 
-- discovers top-level `v*.py` files
-- sorts them by numeric version suffix
-- imports each module dynamically
-- requires a `run_study()` function
-- collects one metrics dict per version
-- writes `results.json`
-- writes `results.csv`
+Shape:
 
-`qstudy run <name>` calls that same execution path without requiring you to `cd` into the experiment directory first.
-`qstudy run <name> --version <version>` uses that same execution path but filters to one exact version stem or filename.
+```json
+{
+  "version": "v1_volume_confirmed",
+  "run_at": "2026-05-29T12:34:56Z",
+  "metrics": {
+    "net_sharpe": 0.81,
+    "ann_return": 0.11
+  }
+}
+```
 
-The generated `v0.py` uses a minimal runnable baseline:
+This is the raw execution artifact. Each run creates a new file.
 
-- `SP500` universe
-- `SPY` benchmark
-- starter date range in `shared.py`
-- a simple mean-reversion signal
-- long/short portfolio construction
+### `log.json`
 
-The scaffold is intentionally runnable first and customizable second. The `TODO` markers in `shared.py` and `v0.py` show the intended edit points.
+Written by `qstudy log-study`.
 
----
-
-## Results Format
-
-`results.json`:
-
-- JSON array of objects
-- one object per version
-- each row includes `version` plus flattened metrics
-
-Example:
+Shape:
 
 ```json
 [
   {
-    "version": "v0",
-    "sharpe": 1.12,
-    "ann_return": 0.18
-  },
-  {
-    "version": "v1",
-    "sharpe": 1.34,
-    "ann_return": 0.21
+    "version": "v1_volume_confirmed",
+    "ancestor": "v0",
+    "hypothesis": "Add a volume confirmation filter",
+    "metrics": {
+      "net_sharpe": 0.81,
+      "ann_return": 0.11
+    },
+    "analysis": "Sharpe improved while turnover fell.",
+    "run_at": "2026-05-29T12:40:00Z"
   }
 ]
 ```
 
-`results.csv`:
+This is the source of truth for `show-results` and `query`.
 
-- one row per version
-- same columns as `results.json`
-- overwritten on every run, including filtered single-version runs
+### `iteration_index.json`
 
-`iteration_index.json`:
+Written by `qstudy create` and `qstudy iterate`.
 
-- JSON array of objects
-- one object per version file
-- stores the numeric version, filename, source filename, and normalized label
-- metadata only; `run.py` still uses `v*.py` discovery as the source of truth
+Shape:
 
----
+```json
+[
+  {
+    "version": 0,
+    "file": "v0.py",
+    "source_file": null,
+    "label": null
+  },
+  {
+    "version": 1,
+    "file": "v1_volume_confirmed.py",
+    "source_file": "v0.py",
+    "parent": null,
+    "label": "volume_confirmed"
+  }
+]
+```
 
-## Errors
+This file tracks lineage. It does not control which version files are run.
 
-The CLI returns a non-zero exit code for:
+## Error Cases
 
-- invalid config files
+The CLI returns a non-zero exit code for common failures, including:
+
+- malformed `.qstudy.toml`
 - missing experiments
-- missing or malformed `results.json`
-- duplicate scaffold targets
+- missing selected version files
+- missing `run_study()`
+- `run_study()` returning a non-dict value
+- malformed `log.json`
+- malformed `iteration_index.json`
+- invalid metric aliases in `query`
 
-The generated `run.py` also fails if a version module does not define `run_study()`.
+## Current Limitations
 
----
+These are worth knowing when using the feature:
 
-## Notes
-
-- The CLI only reads config in v1. There is no config-writing command.
-- `qstudy show-results` reads `results.json` as the source of truth.
-- The scaffold is meant for local research iteration, not as a deployment system.
+- `qstudy run` and `qstudy log-study` are intentionally separate, so there is no single command that both executes and records a result
+- `show-results` and `query` only see what has been logged to `log.json`
+- the execution runner only discovers top-level `v*.py` files
+- lineage in `iteration_index.json` can drift from files on disk, although execution still follows the files on disk
