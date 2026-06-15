@@ -33,12 +33,19 @@ Supported keys:
 ```toml
 studies_dir = "experiments"
 data_dir = ".qstudy-data"
+tickrake_sqlite_path = "~/.tickrake/tickrake.sqlite3"
+tickrake_history_dirs = [
+  "~/.tickrake/data/history/ibkr-paper",
+  "~/.tickrake/data/history/tickrake",
+]
 ```
 
 Rules:
 
 - `studies_dir` is required if a config file exists
 - `data_dir` is optional
+- `tickrake_sqlite_path` is optional and defaults to `~/.tickrake/tickrake.sqlite3`
+- `tickrake_history_dirs` is optional and defaults to the ordered Tickrake day-history roots
 - relative paths resolve relative to the config file that defined them
 - if no config file exists, studies are created directly under the current working directory
 
@@ -47,6 +54,11 @@ Example:
 ```toml
 studies_dir = "experiments"
 data_dir = ".qstudy-data"
+tickrake_sqlite_path = "~/.tickrake/tickrake.sqlite3"
+tickrake_history_dirs = [
+  "~/.tickrake/data/history/ibkr-paper",
+  "~/.tickrake/data/history/tickrake",
+]
 ```
 
 With that file in the repo root:

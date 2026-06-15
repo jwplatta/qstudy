@@ -25,7 +25,7 @@ high_df     = d.high           # (dates x tickers) adjusted high
 low_df      = d.low            # (dates x tickers) adjusted low
 close_df    = d.close          # (dates x tickers) adjusted close
 volume_df   = d.volume         # (dates x tickers) daily volume
-returns_df  = d.returns        # close.pct_change().fillna(0)
+returns_df  = d.returns        # close-derived returns, with NaN on masked-out index dates
 log_ret_df  = d.log_returns    # log(close / close.shift(1))
 ```
 
@@ -49,7 +49,7 @@ tickrake_history_dirs = ["~/.tickrake/data/history/ibkr-paper", "~/.tickrake/dat
 
 ## Signals
 
-Signals are plain DataFrames `(dates x tickers)`. You write the formula inline — that's the research. Filters zero out ineligible assets by setting them to `NaN`.
+Signals are plain DataFrames `(dates x tickers)`. You write the formula inline — that's the research. Filters exclude ineligible assets by setting them to `NaN`.
 
 ### Signal formula (inline in notebook)
 
