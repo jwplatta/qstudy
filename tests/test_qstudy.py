@@ -1148,6 +1148,78 @@ class TestStudyNewMethods:
         assert pd.isna(study.cache["close"].loc[pd.Timestamp("2024-01-02"), "BBB"])
         assert pd.isna(study.cache["returns"].loc[pd.Timestamp("2024-01-04"), "AAA"])
 
+    def test_masked_index_data_runs_through_pipeline_filters_and_scalers(self, tmp_path):
+        sqlite_path = tmp_path / "tickrake.sqlite3"
+        history_dir = tmp_path / "history"
+        history_dir.mkdir()
+        make_tickrake_sqlite(
+            sqlite_path,
+            [
+                ("AAA", "SP500", "2024-01-02", "2024-01-05"),
+                ("BBB", "SP500", "2024-01-02", None),
+                ("CCC", "SP500", "2024-01-02", None),
+            ],
+        )
+        for ticker, base in {"AAA": 10, "BBB": 20, "CCC": 30}.items():
+            write_history_csv(
+                history_dir / f"{ticker}_day.csv",
+                [
+                    ("2024-01-02T06:00:00Z", base, base + 1, base - 1, base + 0.1, 1000),
+                    ("2024-01-03T06:00:00Z", base + 1, base + 2, base, base + 1.1, 1100),
+                    ("2024-01-04T06:00:00Z", base + 2, base + 3, base + 1, base + 2.1, 1200),
+                    ("2024-01-05T06:00:00Z", base + 3, base + 4, base + 2, base + 3.1, 1300),
+                    ("2024-01-08T06:00:00Z", base + 4, base + 5, base + 3, base + 4.1, 1400),
+                ],
+            )
+        write_history_csv(
+            history_dir / "SPY_day.csv",
+            [
+                ("2024-01-02T06:00:00Z", 100, 101, 99, 100.5, 1_000_000),
+                ("2024-01-03T06:00:00Z", 101, 102, 100, 101.5, 1_000_000),
+                ("2024-01-04T06:00:00Z", 102, 103, 101, 102.5, 1_000_000),
+                ("2024-01-05T06:00:00Z", 103, 104, 102, 103.5, 1_000_000),
+                ("2024-01-08T06:00:00Z", 104, 105, 103, 104.5, 1_000_000),
+            ],
+        )
+
+        universe = qs.download(
+            start="2024-01-02",
+            end="2024-01-08",
+            index_code="SP500",
+            sqlite_path=sqlite_path,
+            history_dirs=[history_dir],
+        )
+        benchmark = qs.download(
+            ["SPY"],
+            "2024-01-02",
+            "2024-01-08",
+            sqlite_path=sqlite_path,
+            history_dirs=[history_dir],
+        )
+
+        def signal_fn(**cache):
+            return -cache["_active_returns"].rolling(2).mean()
+
+        def shrink_exposure(positions, **cache):
+            return positions.mul(0.5)
+
+        study = (
+            qs.Study(universe=universe, benchmark=benchmark, verbose=False)
+            .base_signal(signal_fn)
+            .add_vol_filter(vol_window=2, quantile=0.75, keep="low")
+            .add_tradeable_constraint(qs.liquidity(top_n=2, window=2))
+            .build_long_short(n_long=1, n_short=1)
+            .weight_equal()
+            .scale_risk(fn=shrink_exposure)
+            .run()
+        )
+
+        removed_date = pd.Timestamp("2024-01-08")
+        assert study.cache["portfolio_returns"] is not None
+        assert pd.isna(study.cache["returns"].loc[removed_date, "AAA"])
+        assert pd.isna(study.cache["signal"].loc[removed_date, "AAA"])
+        assert pd.isna(study.cache["positions"].loc[removed_date, "AAA"])
+
     def test_download_warns_and_drops_missing_tickers(self, tmp_path):
         sqlite_path = tmp_path / "tickrake.sqlite3"
         history_dir = tmp_path / "history"

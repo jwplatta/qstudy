@@ -11,9 +11,8 @@ and pass the `StudyData` objects to `Study` — no downloading happens inside th
 ```python
 import qstudy as qs
 from qstudy import Study
-from qstudy.constants import SP500
 
-universe_data  = qs.download(SP500,        "2018-01-01", "2024-12-31")
+universe_data  = qs.download(index_code="SP500", start="2018-01-01", end="2024-12-31")
 benchmark_data = qs.download(["SPY"],      "2018-01-01", "2024-12-31")
 factors_data   = qs.download(["SPY","QQQ"],"2018-01-01", "2024-12-31")
 ```
@@ -44,9 +43,8 @@ The simplest case — everything uses built-in methods, no custom functions need
 ```python
 import qstudy as qs
 from qstudy import Study
-from qstudy.constants import SP500
 
-universe_data  = qs.download(SP500,   "2018-01-01", "2024-12-31")
+universe_data  = qs.download(index_code="SP500", start="2018-01-01", end="2024-12-31")
 benchmark_data = qs.download(["SPY"], "2018-01-01", "2024-12-31")
 
 study = (
@@ -72,8 +70,8 @@ study2.report()
 | Method | Effect |
 |--------|--------|
 | `mean_reversion(window=5)` | Signal = negative 5-day rolling mean return. Recent losers score highest. |
-| `add_liquidity_filter(top_n=300)` | Zero out signal for tickers outside the 300 most liquid by rolling dollar volume. |
-| `add_vol_filter(quantile=0.75, keep="low")` | Zero out signal for tickers with realized vol above the 75th cross-sectional percentile. |
+| `add_liquidity_filter(top_n=300)` | Exclude tickers outside the 300 most liquid by rolling dollar volume by setting their signal to `NaN`. |
+| `add_vol_filter(quantile=0.75, keep="low")` | Exclude tickers with realized vol above the 75th cross-sectional percentile by setting their signal to `NaN`. |
 | `build_long_short(n_long=25, n_short=25)` | Top 25 signal → long (+1), bottom 25 → short (−1), dollar-neutral, rebalanced weekly. |
 
 ---
@@ -86,9 +84,8 @@ This example shows how to plug in custom signal filters and position scalers.
 import numpy as np
 import qstudy as qs
 from qstudy import Study
-from qstudy.constants import SP500
 
-universe_data  = qs.download(SP500,           "2015-01-01", "2024-12-31")
+universe_data  = qs.download(index_code="SP500", start="2015-01-01", end="2024-12-31")
 benchmark_data = qs.download(["SPY"],         "2015-01-01", "2024-12-31")
 factors_data   = qs.download(["SPY", "QQQ"],  "2015-01-01", "2024-12-31")
 
@@ -99,7 +96,7 @@ factors_data   = qs.download(["SPY", "QQQ"],  "2015-01-01", "2024-12-31")
 # Do NOT reassign cache keys or mutate DataFrames in place; the cache is a shallow copy.
 
 def regime_filter(signal, **cache):
-    """Zero out signal on days where cross-sectional return dispersion is low.
+    """Exclude signal on days where cross-sectional return dispersion is low.
 
     Low dispersion means there is little spread between winners and losers,
     so a long/short strategy is unlikely to add value that day.

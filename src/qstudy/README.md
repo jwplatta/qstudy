@@ -6,7 +6,7 @@ Lightweight backtesting library for cross-sectional equity research. Atomic, com
 
 ```python
 import qstudy as qs
-from qstudy.constants import SP500, SECTOR_ETFS
+from qstudy.constants import SECTOR_ETFS
 ```
 
 ---
@@ -25,7 +25,7 @@ high_df     = d.high           # (dates x tickers) adjusted high
 low_df      = d.low            # (dates x tickers) adjusted low
 close_df    = d.close          # (dates x tickers) adjusted close
 volume_df   = d.volume         # (dates x tickers) daily volume
-returns_df  = d.returns        # close.pct_change().fillna(0)
+returns_df  = d.returns        # close-derived returns, with NaN on masked-out index dates
 log_ret_df  = d.log_returns    # log(close / close.shift(1))
 ```
 
@@ -49,7 +49,7 @@ tickrake_history_dirs = ["~/.tickrake/data/history/ibkr-paper", "~/.tickrake/dat
 
 ## Signals
 
-Signals are plain DataFrames `(dates x tickers)`. You write the formula inline — that's the research. Filters zero out ineligible assets by setting them to `NaN`.
+Signals are plain DataFrames `(dates x tickers)`. You write the formula inline — that's the research. Filters exclude ineligible assets by setting them to `NaN`.
 
 ### Signal formula (inline in notebook)
 
@@ -203,7 +203,6 @@ qs.param_heatmap(results, row_param="qt", col_param="window", metric="metric")
 
 ```python
 import qstudy as qs
-from qstudy.constants import SP500
 
 d = qs.download(index_code="SP500", start="2015-01-01", end="2023-12-31")
 close_df, volume_df, returns_df = d.close, d.volume, d.returns
@@ -231,7 +230,6 @@ qs.summary_plot(port_ret)
 ## Constants
 
 ```python
-from qstudy.constants import SP500        # ~500 S&P 500 tickers
 from qstudy.constants import SECTOR_ETFS  # 11 SPDR sector ETFs
 from qstudy.constants import MAJOR_INDEXES  # SPY, QQQ, DIA, IWM
 ```

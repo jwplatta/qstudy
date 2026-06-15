@@ -29,7 +29,7 @@ sys.path.insert(0, str(_repo_root / "experiments" / "xsect-mean-rev-cointegratio
 
 import qstudy as qs
 from qstudy import PortfolioStudy, Study
-from qstudy.constants import SECTOR_ETFS, SP500
+from qstudy.constants import SECTOR_ETFS
 
 START_DATE = "2015-01-01"
 END_DATE = "2023-12-31"
@@ -41,7 +41,7 @@ END_DATE = "2023-12-31"
 
 
 def load_universe():
-    return qs.download(SP500, START_DATE, END_DATE)
+    return qs.download(index_code="SP500", start=START_DATE, end=END_DATE)
 
 
 def load_benchmark():
