@@ -47,22 +47,6 @@ Interpretation:
 
 The bugs were not in the README itself. They were in downstream code that still implicitly assumed a dense, static universe.
 
-## Reproduction
-
-Run:
-
-```bash
-uv run python tmp/multi-sleeve-us-equities-stat-arb.py
-```
-
-The initial failure on `main` was:
-
-```text
-ValueError: zero-size array to reduction operation maximum which has no identity
-```
-
-Later, after fixing that crash, the script ran but several sleeves reported `NaN` Sharpe. Those were not metric bugs; they were dead sleeves producing all-zero return series.
-
 ## Bug 1: Empty OLS Sample in `residualize()`
 
 ### Symptom
