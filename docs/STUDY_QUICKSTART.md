@@ -11,9 +11,8 @@ and pass the `StudyData` objects to `Study` — no downloading happens inside th
 ```python
 import qstudy as qs
 from qstudy import Study
-from qstudy.constants import SP500
 
-universe_data  = qs.download(SP500,        "2018-01-01", "2024-12-31")
+universe_data  = qs.download(index_code="SP500", start="2018-01-01", end="2024-12-31")
 benchmark_data = qs.download(["SPY"],      "2018-01-01", "2024-12-31")
 factors_data   = qs.download(["SPY","QQQ"],"2018-01-01", "2024-12-31")
 ```
@@ -44,9 +43,8 @@ The simplest case — everything uses built-in methods, no custom functions need
 ```python
 import qstudy as qs
 from qstudy import Study
-from qstudy.constants import SP500
 
-universe_data  = qs.download(SP500,   "2018-01-01", "2024-12-31")
+universe_data  = qs.download(index_code="SP500", start="2018-01-01", end="2024-12-31")
 benchmark_data = qs.download(["SPY"], "2018-01-01", "2024-12-31")
 
 study = (
@@ -86,9 +84,8 @@ This example shows how to plug in custom signal filters and position scalers.
 import numpy as np
 import qstudy as qs
 from qstudy import Study
-from qstudy.constants import SP500
 
-universe_data  = qs.download(SP500,           "2015-01-01", "2024-12-31")
+universe_data  = qs.download(index_code="SP500", start="2015-01-01", end="2024-12-31")
 benchmark_data = qs.download(["SPY"],         "2015-01-01", "2024-12-31")
 factors_data   = qs.download(["SPY", "QQQ"],  "2015-01-01", "2024-12-31")
 

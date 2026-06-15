@@ -13,12 +13,11 @@ import pandas as pd
 
 import qstudy as qs
 from qstudy import Study
-from qstudy.constants import SP500
 
 start_date = "2015-01-01"
 end_date = "2023-12-31"
 
-universe = qs.download(SP500, start_date, end_date)
+universe = qs.download(index_code="SP500", start=start_date, end=end_date)
 benchmark = qs.download(["SPY"], start_date, end_date)
 factors = qs.download(["SPY", "XLK"], start_date, end_date)
 

@@ -265,7 +265,7 @@ The scaffold is small by design:
 
 The generated starter baseline uses:
 
-- `SP500` as the default universe
+- `index_code="SP500"` as the default universe
 - `SPY` as the default benchmark
 - a simple mean-reversion starter signal
 - `Study(...).base_signal(...).build_long_short(...).run()`

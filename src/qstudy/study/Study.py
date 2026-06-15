@@ -41,7 +41,7 @@ class Study:
 
     Usage::
 
-        universe_data = qs.download(SP500, "2018-01-01", "2024-12-31")
+        universe_data = qs.download(index_code="SP500", start="2018-01-01", end="2024-12-31")
         benchmark_data = qs.download(["SPY"], "2018-01-01", "2024-12-31")
         factors_data = qs.download(["SPY", "QQQ"], "2018-01-01", "2024-12-31")
 

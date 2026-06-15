@@ -6,7 +6,7 @@ Lightweight backtesting library for cross-sectional equity research. Atomic, com
 
 ```python
 import qstudy as qs
-from qstudy.constants import SP500, SECTOR_ETFS
+from qstudy.constants import SECTOR_ETFS
 ```
 
 ---
@@ -203,7 +203,6 @@ qs.param_heatmap(results, row_param="qt", col_param="window", metric="metric")
 
 ```python
 import qstudy as qs
-from qstudy.constants import SP500
 
 d = qs.download(index_code="SP500", start="2015-01-01", end="2023-12-31")
 close_df, volume_df, returns_df = d.close, d.volume, d.returns
@@ -231,7 +230,6 @@ qs.summary_plot(port_ret)
 ## Constants
 
 ```python
-from qstudy.constants import SP500        # ~500 S&P 500 tickers
 from qstudy.constants import SECTOR_ETFS  # 11 SPDR sector ETFs
 from qstudy.constants import MAJOR_INDEXES  # SPY, QQQ, DIA, IWM
 ```
