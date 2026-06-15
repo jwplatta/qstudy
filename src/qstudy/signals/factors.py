@@ -108,7 +108,7 @@ class BarraLiteFactorModel:
     def fit(
         self,
         returns: pd.DataFrame,
-        benchmark_returns: pd.Series,
+        benchmark_returns: pd.Series | pd.DataFrame,
         close: pd.DataFrame,
     ) -> BarraLiteFactorModel:
         """Pre-compute all rolling factor exposures.
@@ -117,13 +117,14 @@ class BarraLiteFactorModel:
 
         Args:
             returns:           Daily returns (dates x tickers).
-            benchmark_returns: Market returns Series (dates,), e.g. SPY.
+            benchmark_returns: Market returns Series (dates,), e.g. SPY. A single-column
+                               DataFrame is also accepted and squeezed to a Series.
             close:             Adjusted close prices (dates x tickers).
 
         Returns:
             self (for chaining).
         """
-        bench = benchmark_returns.reindex(returns.index).fillna(0.0)
+        bench = benchmark_returns.squeeze().reindex(returns.index).fillna(0.0)
 
         # Market beta: rolling cov(r_i, r_mkt) / var(r_mkt), shifted 1 day (no lookahead)
         mean_r = returns.rolling(self.beta_window).mean()

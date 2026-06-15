@@ -726,6 +726,17 @@ class TestBarraLiteFactorModel:
         assert model._sector_dummies is not None
         assert len(model._sector_cols) > 0
 
+    def test_fit_accepts_single_column_benchmark_dataframe(self):
+        returns, benchmark, close, _ = make_barra_data()
+        from qstudy.signals.factors import BarraLiteFactorModel
+
+        model = BarraLiteFactorModel(factors=["market"], beta_window=20, min_stocks=5)
+        model.fit(returns, benchmark.to_frame(), close)
+        residuals, daily_r2 = model.residualize(returns)
+
+        assert residuals.notna().any().any()
+        assert len(daily_r2) > 0
+
     def test_min_stocks_threshold_produces_nan(self):
         """Dates where fewer than min_stocks have valid exposure data → NaN residuals."""
         returns, benchmark, close, _ = make_barra_data(n_dates=200, n_tickers=10)
