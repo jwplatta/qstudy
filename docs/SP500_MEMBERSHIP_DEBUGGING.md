@@ -16,6 +16,16 @@ All of these were triggered by the same broader change in data semantics:
 - prices and returns are masked outside each ticker's valid membership dates
 - the data is therefore sparse in ways the old survivorship-biased workflow never had to handle
 
+## Scope of This PR
+
+This pull request includes the reusable library fixes and regression tests for:
+
+- empty OLS samples in time-series residualization
+- single-column benchmark frame handling in the Barra-lite factor model
+- the debugging summary in this document
+
+The distance-sleeve and residual-dispersion filter fixes were applied locally to the test script during debugging so the full workflow could be validated, but that script is not part of the PR.
+
 ## Relevant Commits
 
 - `ef9b7f6` `Replace yfinance loader with Tickrake-backed data access (#10)`
@@ -82,7 +92,7 @@ For those tickers:
 - `y` became empty
 - `statsmodels.OLS(y, x)` received a zero-row design matrix and raised
 
-### Fix
+### Local Validation Fix
 
 `src/qstudy/signals/factors.py` now joins returns and factors first, drops missing rows, and skips tickers with no usable regression sample.
 
@@ -106,7 +116,7 @@ x = regression_frame.drop(columns="returns")
 model = sm.OLS(y, x).fit()
 ```
 
-### Result
+### Result from Local Validation
 
 - no crash
 - unusable tickers stay all-`NaN` in residual output
@@ -133,7 +143,7 @@ That broke the market-beta exposure construction:
 - `self.factor_exposures_["market"]` became all `NaN`
 - cross-sectional residualization never had valid continuous factor exposures
 
-### Fix
+### Local Validation Fix
 
 `src/qstudy/signals/factors.py` now accepts a single-column benchmark frame by squeezing it to a `Series` first:
 
@@ -141,7 +151,7 @@ That broke the market-beta exposure construction:
 bench = benchmark_returns.squeeze().reindex(returns.index).fillna(0.0)
 ```
 
-### Result
+### Result from Local Validation
 
 After the fix:
 
