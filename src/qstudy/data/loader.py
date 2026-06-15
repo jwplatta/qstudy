@@ -4,7 +4,6 @@ import hashlib
 import json
 import pickle
 import sqlite3
-import time
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
@@ -424,38 +423,17 @@ def _read_daily_history(
 
 def get_sector_map(
     tickers: list[str],
-    cache_path: str | Path | None = None,
-    max_age_days: int = 30,
     sqlite_path: str | Path | None = None,
 ) -> dict[str, str]:
-    """Fetch and disk-cache sector classifications from Tickrake SQLite."""
+    """Fetch sector classifications from Tickrake SQLite."""
     normalized_tickers = _normalize_tickers(tickers)
     if not normalized_tickers:
         return {}
 
-    if cache_path is None:
-        resolved_cache_path = Path.home() / ".qstudy" / "sector_map.json"
-    else:
-        resolved_cache_path = Path(cache_path)
-    resolved_cache_path.parent.mkdir(parents=True, exist_ok=True)
-
-    cached: dict[str, str] = {}
-    if resolved_cache_path.exists():
-        age_days = (time.time() - resolved_cache_path.stat().st_mtime) / 86400
-        if age_days < max_age_days:
-            with resolved_cache_path.open(encoding="utf-8") as handle:
-                cached = json.load(handle)
-
-    missing = [ticker for ticker in normalized_tickers if ticker not in cached]
-    if missing:
-        placeholders = ", ".join("?" for _ in missing)
-        db_path = _resolve_tickrake_sqlite_path(sqlite_path)
-        query = f"SELECT ticker, gics_sector FROM tickers WHERE ticker IN ({placeholders})"
-        with sqlite3.connect(db_path) as connection:
-            rows = connection.execute(query, missing).fetchall()
-        sectors = {ticker: sector or "Unknown" for ticker, sector in rows}
-        for ticker in missing:
-            cached[ticker] = sectors.get(ticker, "Unknown")
-        resolved_cache_path.write_text(json.dumps(cached, indent=2), encoding="utf-8")
-
-    return {ticker: cached.get(ticker, "Unknown") for ticker in normalized_tickers}
+    placeholders = ", ".join("?" for _ in normalized_tickers)
+    db_path = _resolve_tickrake_sqlite_path(sqlite_path)
+    query = f"SELECT ticker, gics_sector FROM tickers WHERE ticker IN ({placeholders})"
+    with sqlite3.connect(db_path) as connection:
+        rows = connection.execute(query, normalized_tickers).fetchall()
+    sectors = {ticker: sector or "Unknown" for ticker, sector in rows}
+    return {ticker: sectors.get(ticker, "Unknown") for ticker in normalized_tickers}

@@ -1173,9 +1173,7 @@ class TestStudyNewMethods:
         sqlite_path = tmp_path / "tickrake.sqlite3"
         make_tickrake_sqlite(sqlite_path, [("AAA", "SP500", "2024-01-02", None)])
 
-        sector_map = qs.get_sector_map(
-            ["AAA", "MISSING"], cache_path=tmp_path / "sector.json", sqlite_path=sqlite_path
-        )
+        sector_map = qs.get_sector_map(["AAA", "MISSING"], sqlite_path=sqlite_path)
 
         assert sector_map == {"AAA": "Technology", "MISSING": "Unknown"}
 
