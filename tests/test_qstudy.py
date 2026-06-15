@@ -1425,6 +1425,34 @@ class TestStudyPipelineEquivalence:
             atol=1e-10,
         )
 
+    def test_residualize_skips_tickers_with_no_usable_factor_overlap(self):
+        dates = make_dates(4)
+        returns_df = pd.DataFrame(
+            {
+                "AAA": [0.01, -0.02, 0.03, 0.01],
+                "OLD": [np.nan, np.nan, np.nan, np.nan],
+            },
+            index=dates,
+            dtype=float,
+        )
+        factor_returns = pd.DataFrame(
+            {
+                "SPY": [0.005, -0.004, 0.006, 0.002],
+                "XLK": [0.004, -0.003, 0.005, 0.001],
+            },
+            index=dates,
+            dtype=float,
+        )
+
+        residuals_df, params_df, rsquared_s = qs.residualize(returns_df, factor_returns)
+
+        assert residuals_df["AAA"].notna().any()
+        assert residuals_df["OLD"].isna().all()
+        assert "AAA" in params_df.index
+        assert "OLD" not in params_df.index
+        assert "AAA" in rsquared_s.index
+        assert "OLD" not in rsquared_s.index
+
     def test_equity_curve_scaler_uses_lagged_positions(self):
         """A position scaler that recomputes the equity curve must use positions.shift(1).
 

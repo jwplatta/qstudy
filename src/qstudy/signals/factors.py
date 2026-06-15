@@ -36,7 +36,11 @@ def residualize(
 
     for ticker in r.columns:
         y = r[ticker].dropna()
-        x = f.loc[y.index]
+        regression_frame = pd.concat([y.rename("returns"), f.loc[y.index]], axis=1).dropna()
+        if regression_frame.empty:
+            continue
+        y = regression_frame["returns"]
+        x = regression_frame.drop(columns="returns")
         model = sm.OLS(y, x).fit()
         residuals.loc[y.index, ticker] = model.resid
         params[ticker] = model.params
