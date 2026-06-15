@@ -1,10 +1,20 @@
-# SP500 Membership Debugging Notes
+# SP500 Membership Debugging Summary
 
-## Summary
+## Overview
 
-After the Tickrake-backed SP500 membership work landed, the script at `tmp/multi-sleeve-us-equities-stat-arb.py` failed on the current `main` branch.
+After the Tickrake-backed SP500 membership work landed, `tmp/multi-sleeve-us-equities-stat-arb.py`
+exposed three separate problems:
 
-The failure was not caused by the removal of the old `SP500` constant itself. The hard failure came from the new membership-aware universe producing fully masked return columns for some historical constituents, which then broke time-series residualization.
+1. a hard crash in time-series residualization
+2. a benchmark-shape bug that killed the factor-model sleeve
+3. two signal-construction assumptions in the script that failed under sparse,
+   membership-aware history
+
+All of these were triggered by the same broader change in data semantics:
+
+- `qs.download(index_code="SP500", ...)` now loads a historical constituent universe
+- prices and returns are masked outside each ticker's valid membership dates
+- the data is therefore sparse in ways the old survivorship-biased workflow never had to handle
 
 ## Relevant Commits
 
@@ -13,18 +23,19 @@ The failure was not caused by the removal of the old `SP500` constant itself. Th
 
 Interpretation:
 
-- `#10` changed `qs.download()` so `index_code="SP500"` resolves a historical universe and applies a membership mask.
-- `#11` removed the stale hardcoded `SP500` constant and updated docs/examples to use `index_code="SP500"`.
+- `#10` switched the loader to Tickrake-backed historical index membership data
+- `#11` removed the stale hardcoded `SP500` constant and updated docs/examples to use
+  `index_code="SP500"`
 
 ## README State
 
-`src/qstudy/README.md` already reflects the intended new behavior:
+`src/qstudy/README.md` was already directionally correct:
 
 - use `qs.download(index_code="SP500", start=..., end=...)`
-- expect `StudyData.returns` to contain `NaN` outside each ticker's valid membership dates
-- treat `NaN` as excluded rather than forcing zeroes
+- expect membership-aware `NaN` masking outside valid constituent dates
+- treat `NaN` as excluded data, not zero returns
 
-That documentation direction was correct. The runtime bug was that residualization still assumed every ticker would have at least one usable regression row.
+The bugs were not in the README itself. They were in downstream code that still implicitly assumed a dense, static universe.
 
 ## Reproduction
 
@@ -34,26 +45,28 @@ Run:
 uv run python tmp/multi-sleeve-us-equities-stat-arb.py
 ```
 
-Observed failure on `main`:
+The initial failure on `main` was:
 
 ```text
 ValueError: zero-size array to reduction operation maximum which has no identity
 ```
 
-Failure path:
+Later, after fixing that crash, the script ran but several sleeves reported `NaN` Sharpe. Those were not metric bugs; they were dead sleeves producing all-zero return series.
+
+## Bug 1: Empty OLS Sample in `residualize()`
+
+### Symptom
+
+The script crashed in:
 
 1. `tmp/multi-sleeve-us-equities-stat-arb.py`
 2. `Study._run_residualize()`
 3. `qstudy.signals.factors.residualize()`
 4. `statsmodels.OLS(...)`
 
-The crash happened while running the second sleeve:
+### Root Cause
 
-- `Active-Return MR (z/60, r10; resid-disp gate)`
-
-## Root Cause
-
-The new historical SP500 universe included tickers whose membership dates existed in the index table, but whose locally available Tickrake candle history did not overlap those membership dates.
+Historical SP500 membership plus local candle availability produced tickers that were valid index members on paper but had no usable price history inside those membership windows.
 
 The concrete tickers found during debugging were:
 
@@ -61,41 +74,17 @@ The concrete tickers found during debugging were:
 - `DNR`
 - `DO`
 
-What this meant in practice:
+For those tickers:
 
-- `membership_mask` was `True` for part of the requested date range
-- `close` and `returns` were completely `NaN` after the loader applied the mask
+- `membership_mask` was `True` for part of the date range
+- `close` and `returns` were still all `NaN` after masking
 - `residualize()` did `y = r[ticker].dropna()`
-- for those tickers, `y` was empty
-- `statsmodels.OLS(y, x)` was called with a zero-row design matrix
-- statsmodels raised before fitting
+- `y` became empty
+- `statsmodels.OLS(y, x)` received a zero-row design matrix and raised
 
-This is an edge case introduced by the shift from a survivorship-biased static ticker list to a historical membership-aware universe.
+### Fix
 
-## Data Observations
-
-The failing run used:
-
-- universe shape: `2301 x 681`
-- factor shape: `2264 x 11`
-- common index length: `2264`
-
-There were:
-
-- `3` tickers with no non-`NaN` returns on the factor-overlap index
-- `37` universe dates not present in the factor dataset
-
-The empty-regression tickers were exactly:
-
-- `ADT`
-- `DNR`
-- `DO`
-
-All three had ticker history files on disk, but the available candle history did not overlap the historical membership windows being requested. That strongly suggests a historical identity / ticker-reuse mismatch rather than a simple missing-file problem.
-
-## Fix
-
-The fix was implemented in `src/qstudy/signals/factors.py`.
+`src/qstudy/signals/factors.py` now joins returns and factors first, drops missing rows, and skips tickers with no usable regression sample.
 
 Old logic:
 
@@ -117,72 +106,195 @@ x = regression_frame.drop(columns="returns")
 model = sm.OLS(y, x).fit()
 ```
 
-Behavior after the fix:
+### Result
 
-- rows with missing factor inputs are dropped before regression
-- tickers with zero usable rows are skipped
-- their residual column remains all `NaN`
-- no exception is raised
+- no crash
+- unusable tickers stay all-`NaN` in residual output
+- the script proceeds normally
+
+## Bug 2: Benchmark Shape Bug in `BarraLiteFactorModel.fit()`
+
+### Symptom
+
+After fixing the empty-OLS crash, the factor-model residual sleeve still produced:
+
+- all-`NaN` residuals
+- zero active position days
+- `NaN` Sharpe
+
+### Root Cause
+
+`BarraLiteFactorModel.fit()` assumed `benchmark_returns` was a `Series`, but the stat-arb script passed `load_benchmark().returns`, which is a single-column `(dates x 1)` `DataFrame`.
+
+That broke the market-beta exposure construction:
+
+- the benchmark reindexing still returned a frame
+- the rolling covariance / variance math misaligned
+- `self.factor_exposures_["market"]` became all `NaN`
+- cross-sectional residualization never had valid continuous factor exposures
+
+### Fix
+
+`src/qstudy/signals/factors.py` now accepts a single-column benchmark frame by squeezing it to a `Series` first:
+
+```python
+bench = benchmark_returns.squeeze().reindex(returns.index).fillna(0.0)
+```
+
+### Result
+
+After the fix:
+
+- market exposures became populated
+- factor-model residuals became populated
+- the factor-model sleeve advanced past residualization
+
+## Bug 3: Distance Sleeves Normalized from an All-`NaN` First Row
+
+### Symptom
+
+All distance-pair sleeves were dead:
+
+- zero signals
+- zero positions
+- zero returns
+- `NaN` Sharpe
+
+### Root Cause
+
+The script normalized pair prices with:
+
+```python
+price = (1 + r).cumprod()
+norm = price / price.iloc[0]
+```
+
+Under the membership-aware universe, the first return row was all `NaN`, so:
+
+- `price.iloc[0]` was all `NaN`
+- `norm` became all `NaN`
+- pair spreads became all `NaN`
+- the distance sleeves never produced a tradable signal
+
+### Fix
+
+The script now normalizes each ticker by its first valid price instead of the first calendar row:
+
+```python
+def normalize_from_first_valid(frame: pd.DataFrame) -> pd.DataFrame:
+    first_valid = frame.bfill().iloc[0].replace(0.0, np.nan)
+    return frame.div(first_valid, axis=1)
+```
+
+and:
+
+```python
+norm = normalize_from_first_valid(price)
+```
+
+### Result
+
+Distance sleeves now produce live signals, live positions, and finite Sharpe values.
+
+## Bug 4: Residual-Dispersion Regime Filter Assumed Dense Calendar History
+
+### Symptom
+
+After fixing the benchmark-shape bug, the factor-model residual sleeve still stayed dead because the conditioning filter removed every signal row:
+
+- base signal populated
+- `residual_dispersion_high_20_q75` produced zero eligible rows
+- zero positions
+- zero return variance
+- `NaN` Sharpe
+
+### Root Cause
+
+The script used:
+
+```python
+disp = resid.std(axis=1).rolling(20).mean()
+thresh = disp.rolling(252).quantile(0.75)
+```
+
+That logic implicitly assumes dense daily residual history.
+
+Under the membership-aware factor-model output:
+
+- residuals only existed on a sparse subset of the calendar
+- `disp` had many gaps
+- `rolling(252)` on the full calendar almost never had 252 usable observations
+- the threshold was almost always `NaN`
+- the gate never turned on
+
+Observed during debugging:
+
+- `resid_dates_with_any = 766`
+- `disp_non_na = 625`
+- `thresh_non_na = 9`
+- `mask_true = 0`
+
+### Fix
+
+The filter now computes the regime series on valid dispersion observations only, while keeping the original 20-observation smoothing and 252-observation threshold intent:
+
+```python
+disp = resid.std(axis=1).dropna()
+disp = disp.rolling(20, min_periods=20).mean()
+thresh = disp.rolling(252, min_periods=252).quantile(0.75)
+mask = disp.gt(thresh).reindex(signal.index).fillna(False)
+```
+
+### Result
+
+The factor-model residual sleeve now trades and produces finite performance metrics.
+
+Example from the repaired sleeve:
+
+- Sharpe: about `0.42`
+- active position days: `1794`
 
 ## Test Coverage
 
-Added regression coverage in `tests/test_qstudy.py`:
+Added or updated regression coverage in `tests/test_qstudy.py`:
 
 - `test_residualize_skips_tickers_with_no_usable_factor_overlap`
+- `test_fit_accepts_single_column_benchmark_dataframe`
 
-The test verifies:
+These tests cover:
 
-- normal tickers still produce residuals
-- a fully unusable ticker stays all `NaN`
-- skipped tickers are absent from parameter and `rsquared` outputs
+- skipping empty time-series OLS samples safely
+- accepting a single-column benchmark frame in the Barra-lite factor model
 
 ## Validation
 
-Focused test run:
+Focused tests:
 
 ```bash
 uv run pytest tests/test_qstudy.py -k 'residualize_skips_tickers_with_no_usable_factor_overlap or pipeline_matches_manual_portfolio_returns'
+uv run pytest tests/test_qstudy.py -k 'single_column_benchmark_dataframe or residualize_skips_tickers_with_no_usable_factor_overlap'
 ```
 
-Result:
-
-- passed
-
-Script rerun after the fix:
+Script validation:
 
 ```bash
-uv run python /Users/jplatta/repos/qstudy/tmp/multi-sleeve-us-equities-stat-arb.py
+uv run python tmp/multi-sleeve-us-equities-stat-arb.py
 ```
 
-Result:
+Observed outcomes after the fixes:
 
-- completed successfully
-- previous empty-OLS crash no longer occurred
+- the script no longer crashes
+- the factor-model residual sleeve reports finite Sharpe
+- the distance sleeves report finite Sharpe
+- the portfolio buildout no longer starts with a dead first sleeve
 
-## Remaining Issue
+## Final Takeaway
 
-Several sleeves still produce `NaN` Sharpe after the crash fix.
+The SP500 membership migration was correct, but it surfaced several hidden assumptions:
 
-Examples observed during the successful rerun:
+- time-series residualization assumed every ticker had at least one usable sample
+- the Barra-lite factor model assumed the benchmark was already a `Series`
+- pair normalization assumed the first calendar row was valid
+- a regime filter assumed dense calendar history instead of sparse valid observations
 
-- `Residual MR (factor model 5d, r10; resid-disp gate)`
-- `Dist Pairs MR (k=3, z60, r10; always-on)`
-- several DPMR sleeves in the portfolio buildout
-
-This appears to be a separate data/signal sparsity issue, not another hard failure in the loader or residualizer.
-
-Most likely next debugging targets:
-
-1. inspect whether those sleeves generate all-zero or all-`NaN` positions
-2. inspect whether their upstream signals are eliminated by tradeability or conditioning filters under the membership-aware universe
-3. inspect whether distance-pair partner construction is too sparse once historical membership masking is applied
-4. inspect whether the cross-sectional factor-model sleeve is failing minimum-stock thresholds often enough to suppress residuals
-
-## Practical Takeaway
-
-The SP500 membership migration exposed a real assumption gap:
-
-- historical membership masking can legitimately create tickers with zero usable sample after alignment
-- time-series residualization must tolerate that case
-
-The loader change was directionally correct. The residualization path needed to be made robust to sparse historical universes.
+All of those assumptions were safe in the old static-universe workflow. They were not safe once qstudy started operating on a historically accurate, membership-aware SP500 universe.
