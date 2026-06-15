@@ -216,10 +216,15 @@ def make_resid_gap_reversion():
 # ---------------------------------------------------------------------------
 
 def filter_residual_dispersion_high_20_q75(signal, **cache):
-    resid  = cache["residual_returns"]
-    disp   = resid.std(axis=1).rolling(20).mean()
-    thresh = disp.rolling(252).quantile(0.75)
-    mask   = disp.gt(thresh).reindex(signal.index).fillna(False)
+    resid = cache["residual_returns"]
+    # Under membership-aware data, factor-model residuals can be sparse on the
+    # calendar index. Build the regime signal on valid observations only so the
+    # 252-day threshold reflects 252 realized dispersion observations rather than
+    # requiring 252 consecutive non-NaN calendar rows.
+    disp = resid.std(axis=1).dropna()
+    disp = disp.rolling(20, min_periods=20).mean()
+    thresh = disp.rolling(252, min_periods=252).quantile(0.75)
+    mask = disp.gt(thresh).reindex(signal.index).fillna(False)
     return signal.where(mask, other=np.nan)
 filter_residual_dispersion_high_20_q75.__name__ = "residual_dispersion_high_20_q75"
 
