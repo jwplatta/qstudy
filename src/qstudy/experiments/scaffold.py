@@ -253,10 +253,9 @@ def _shared_template() -> str:
 from functools import cache
 
 import qstudy as qs
-from qstudy.constants import SP500
-
 START_DATE = "2018-01-01"  # TODO: adjust the study start date.
 END_DATE = "2024-12-31"  # TODO: adjust the study end date.
+UNIVERSE_INDEX = "SP500"  # TODO: replace with a different index-backed universe if needed.
 BENCHMARK_TICKER = "SPY"  # TODO: change the benchmark if needed.
 N_LONG = 25
 N_SHORT = 25
@@ -266,10 +265,10 @@ N_SHORT = 25
 def load_universe():
     \"\"\"Download the default universe for this experiment.
 
-    TODO: replace SP500 with a different universe or a cached dataset if needed.
+    TODO: replace the default index-backed universe or switch to explicit tickers if needed.
     \"\"\"
 
-    return qs.download(SP500, START_DATE, END_DATE)
+    return qs.download(index_code=UNIVERSE_INDEX, start=START_DATE, end=END_DATE)
 
 
 @cache

@@ -16,7 +16,7 @@ Created by Joseph Platta (`jwplatta@gmail.com`).
 
 - Python `3.10+`
 - `uv` for environment and dependency management
-- internet access for first-time market data downloads via `yfinance`
+- a local Tickrake installation with candle history and SQLite metadata
 
 ## Installation
 
@@ -39,9 +39,7 @@ uv pip install "git+https://github.com/jwplatta/qstudy.git"
 ```python
 import qstudy as qs
 from qstudy import Study
-from qstudy.constants import SP500
-
-universe = qs.download(SP500, start="2018-01-01", end="2024-12-31")
+universe = qs.download(index_code="SP500", start="2018-01-01", end="2024-12-31")
 benchmark = qs.download(["SPY"], start="2018-01-01", end="2024-12-31")
 
 study = (
@@ -78,9 +76,7 @@ portfolio-level leverage.
 
 ```python
 import qstudy as qs
-from qstudy.constants import SP500
-
-data = qs.download(SP500, start="2015-01-01", end="2024-12-31")
+data = qs.download(index_code="SP500", start="2015-01-01", end="2024-12-31")
 signal = -data.returns.rolling(5).mean().shift(1)
 signal = qs.vol_filter(signal, data.returns, vol_window=20, quantile=0.7, keep="low")
 
@@ -97,9 +93,7 @@ print(qs.metrics.summary(portfolio_returns, positions))
 ```python
 import qstudy as qs
 from qstudy import Study
-from qstudy.constants import SP500
-
-universe = qs.download(SP500, start="2015-01-01", end="2024-12-31")
+universe = qs.download(index_code="SP500", start="2015-01-01", end="2024-12-31")
 benchmark = qs.download(["SPY"], start="2015-01-01", end="2024-12-31")
 factors = qs.download(["SPY", "XLK", "XLF"], start="2015-01-01", end="2024-12-31")
 
@@ -120,9 +114,7 @@ study.report()
 ```python
 import qstudy as qs
 from qstudy import PortfolioStudy, Study
-from qstudy.constants import SP500
-
-universe = qs.download(SP500, start="2015-01-01", end="2024-12-31")
+universe = qs.download(index_code="SP500", start="2015-01-01", end="2024-12-31")
 benchmark = qs.download(["SPY"], start="2015-01-01", end="2024-12-31")
 
 mr = (
@@ -180,6 +172,11 @@ Project-level configuration lives in `.qstudy.toml`:
 ```toml
 studies_dir = "./experiments"
 data_dir = "./.qstudy-data"
+tickrake_sqlite_path = "~/.tickrake/tickrake.sqlite3"
+tickrake_history_dirs = [
+  "~/.tickrake/data/history/ibkr-paper",
+  "~/.tickrake/data/history/tickrake",
+]
 ```
 
 ## Package Layout

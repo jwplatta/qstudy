@@ -15,10 +15,10 @@ from qstudy.constants import SP500, SECTOR_ETFS
 
 Single API call returns `StudyData` with `open`, `high`, `low`, `close`, `volume`, `returns`, and `log_returns`.
 If `data_dir` is configured in `.qstudy.toml`, `qs.download(...)` caches the full dataset on disk
-keyed by the normalized yfinance request.
+keyed by the normalized Tickrake request.
 
 ```python
-d = qs.download(SP500, start="2015-01-01", end="2023-12-31")
+d = qs.download(index_code="SP500", start="2015-01-01", end="2023-12-31")
 
 open_df     = d.open           # (dates x tickers) adjusted open
 high_df     = d.high           # (dates x tickers) adjusted high
@@ -41,6 +41,8 @@ Optional `.qstudy.toml`:
 ```toml
 studies_dir = "experiments"
 data_dir = ".qstudy-data"
+tickrake_sqlite_path = "~/.tickrake/tickrake.sqlite3"
+tickrake_history_dirs = ["~/.tickrake/data/history/ibkr-paper", "~/.tickrake/data/history/tickrake"]
 ```
 
 ---
@@ -203,7 +205,7 @@ qs.param_heatmap(results, row_param="qt", col_param="window", metric="metric")
 import qstudy as qs
 from qstudy.constants import SP500
 
-d = qs.download(SP500, start="2015-01-01", end="2023-12-31")
+d = qs.download(index_code="SP500", start="2015-01-01", end="2023-12-31")
 close_df, volume_df, returns_df = d.close, d.volume, d.returns
 
 d_f = qs.download(["SPY", "XLK"], start="2015-01-01", end="2023-12-31")

@@ -2,7 +2,7 @@ MAJOR_INDEXES = ["SPY", "QQQ", "DIA", "IWM"]
 
 SECTOR_ETFS = ["XLC", "XLY", "XLP", "XLE", "XLF", "XLV", "XLI", "XLK", "XLB", "XLRE", "XLU"]
 
-# Maps yfinance GICS sector strings to their corresponding SPDR sector ETF tickers.
+# Maps GICS sector strings to their corresponding SPDR sector ETF tickers.
 # Useful for looking up which ETF proxy corresponds to a stock's sector classification.
 SECTOR_ETF_MAP: dict[str, str] = {
     "Communication Services": "XLC",

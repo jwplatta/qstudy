@@ -34,9 +34,15 @@ from qstudy.experiments import (
 def test_load_studies_config_prefers_local_config(tmp_path: Path) -> None:
     local_root = tmp_path / "local-studies"
     local_data = tmp_path / "local-data"
+    local_tickrake = tmp_path / "tickrake.sqlite3"
+    local_history_a = tmp_path / "history-a"
+    local_history_b = tmp_path / "history-b"
     home_root = tmp_path / "home-studies"
     (tmp_path / CONFIG_FILENAME).write_text(
-        'studies_dir = "local-studies"\ndata_dir = "local-data"\n',
+        'studies_dir = "local-studies"\n'
+        'data_dir = "local-data"\n'
+        'tickrake_sqlite_path = "tickrake.sqlite3"\n'
+        'tickrake_history_dirs = ["history-a", "history-b"]\n',
         encoding="utf-8",
     )
     (tmp_path / "home" / CONFIG_FILENAME).parent.mkdir()
@@ -50,6 +56,11 @@ def test_load_studies_config_prefers_local_config(tmp_path: Path) -> None:
     assert config.source == tmp_path / CONFIG_FILENAME
     assert config.studies_root == local_root.resolve()
     assert config.data_root == local_data.resolve()
+    assert config.tickrake_sqlite_path == local_tickrake.resolve()
+    assert config.tickrake_history_dirs == (
+        local_history_a.resolve(),
+        local_history_b.resolve(),
+    )
     assert config.studies_root != home_root.resolve()
 
 
@@ -65,6 +76,11 @@ def test_load_studies_config_uses_global_when_local_missing(tmp_path: Path) -> N
     assert config.source == home / CONFIG_FILENAME
     assert config.studies_root == (home / "experiments").resolve()
     assert config.data_root is None
+    assert config.tickrake_sqlite_path == (home / ".tickrake" / "tickrake.sqlite3").resolve()
+    assert config.tickrake_history_dirs == (
+        (home / ".tickrake" / "data" / "history" / "ibkr-paper").resolve(),
+        (home / ".tickrake" / "data" / "history" / "tickrake").resolve(),
+    )
 
 
 def test_load_studies_config_falls_back_to_cwd(tmp_path: Path) -> None:
@@ -73,6 +89,14 @@ def test_load_studies_config_falls_back_to_cwd(tmp_path: Path) -> None:
     assert config.source is None
     assert config.studies_root == tmp_path.resolve()
     assert config.data_root is None
+    assert (
+        config.tickrake_sqlite_path
+        == (tmp_path / "home" / ".tickrake" / "tickrake.sqlite3").resolve()
+    )
+    assert config.tickrake_history_dirs == (
+        (tmp_path / "home" / ".tickrake" / "data" / "history" / "ibkr-paper").resolve(),
+        (tmp_path / "home" / ".tickrake" / "data" / "history" / "tickrake").resolve(),
+    )
 
 
 def test_create_generates_expected_scaffold_and_empty_log(tmp_path: Path) -> None:
@@ -107,6 +131,16 @@ def test_load_studies_config_rejects_duplicate_data_dir(tmp_path: Path) -> None:
     )
 
     with pytest.raises(QStudyCliError, match="duplicate data_dir"):
+        load_studies_config(cwd=tmp_path, home=tmp_path / "home")
+
+
+def test_load_studies_config_rejects_invalid_tickrake_history_dirs(tmp_path: Path) -> None:
+    (tmp_path / CONFIG_FILENAME).write_text(
+        'studies_dir = "studies"\ntickrake_history_dirs = "bad"\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(QStudyCliError, match="tickrake_history_dirs must be a list"):
         load_studies_config(cwd=tmp_path, home=tmp_path / "home")
 
 
@@ -415,7 +449,7 @@ def test_append_infers_ancestor_from_index(tmp_path: Path) -> None:
     (experiment_dir / "v1_momentum.py").write_text("VALUE = 1\n", encoding="utf-8")
     iterate_experiment(tmp_path, "alpha-study", "vol_filter", parent="v1_momentum")
 
-    entry = append_log_entry(
+    append_log_entry(
         experiment_dir=experiment_dir,
         version="v2_vol_filter",
         ancestor=None,  # omitted — should be inferred
