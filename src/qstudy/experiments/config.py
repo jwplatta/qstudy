@@ -2,16 +2,33 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TypedDict
 
 from qstudy.experiments.errors import ConfigError
 
 CONFIG_FILENAME = ".qstudy.toml"
 
 
+class RawConfigValues(TypedDict):
+    studies_dir: str
+    data_dir: str | None
+    tickrake_sqlite_path: str | None
+    tickrake_history_dirs: list[str] | None
+
+
+class ResolvedConfigValues(TypedDict):
+    studies_dir: Path
+    data_dir: Path | None
+    tickrake_sqlite_path: Path | None
+    tickrake_history_dirs: list[Path] | None
+
+
 @dataclass(frozen=True)
 class StudiesConfig:
     studies_root: Path
     data_root: Path | None
+    tickrake_sqlite_path: Path
+    tickrake_history_dirs: tuple[Path, ...]
     source: Path | None
 
 
@@ -28,6 +45,8 @@ def load_studies_config(
         return StudiesConfig(
             studies_root=config_values["studies_dir"],
             data_root=config_values["data_dir"],
+            tickrake_sqlite_path=_resolve_tickrake_sqlite_path(config_values, home),
+            tickrake_history_dirs=_resolve_tickrake_history_dirs(config_values, home),
             source=local_config,
         )
 
@@ -37,17 +56,30 @@ def load_studies_config(
         return StudiesConfig(
             studies_root=config_values["studies_dir"],
             data_root=config_values["data_dir"],
+            tickrake_sqlite_path=_resolve_tickrake_sqlite_path(config_values, home),
+            tickrake_history_dirs=_resolve_tickrake_history_dirs(config_values, home),
             source=global_config,
         )
 
-    return StudiesConfig(studies_root=cwd, data_root=None, source=None)
+    return StudiesConfig(
+        studies_root=cwd,
+        data_root=None,
+        tickrake_sqlite_path=(home / ".tickrake" / "tickrake.sqlite3").resolve(),
+        tickrake_history_dirs=(
+            (home / ".tickrake" / "data" / "history" / "ibkr-paper").resolve(),
+            (home / ".tickrake" / "data" / "history" / "tickrake").resolve(),
+        ),
+        source=None,
+    )
 
 
-def _read_config(config_path: Path) -> dict[str, Path | None]:
+def _read_config(config_path: Path) -> ResolvedConfigValues:
     raw = _parse_config_text(config_path.read_text(encoding="utf-8"), config_path)
     return {
         "studies_dir": _resolve_config_path(raw["studies_dir"], config_path),
         "data_dir": _resolve_config_path(raw["data_dir"], config_path),
+        "tickrake_sqlite_path": _resolve_config_path(raw["tickrake_sqlite_path"], config_path),
+        "tickrake_history_dirs": _resolve_config_paths(raw["tickrake_history_dirs"], config_path),
     }
 
 
@@ -60,9 +92,40 @@ def _resolve_config_path(raw: str | None, config_path: Path) -> Path | None:
     return resolved
 
 
-def _parse_config_text(text: str, config_path: Path) -> dict[str, str | None]:
+def _resolve_config_paths(raw: list[str] | None, config_path: Path) -> list[Path] | None:
+    if raw is None:
+        return None
+    return [path for value in raw if (path := _resolve_config_path(value, config_path)) is not None]
+
+
+def _resolve_tickrake_sqlite_path(
+    config_values: ResolvedConfigValues,
+    home: Path,
+) -> Path:
+    configured = config_values["tickrake_sqlite_path"]
+    if isinstance(configured, Path):
+        return configured
+    return (home / ".tickrake" / "tickrake.sqlite3").resolve()
+
+
+def _resolve_tickrake_history_dirs(
+    config_values: ResolvedConfigValues,
+    home: Path,
+) -> tuple[Path, ...]:
+    configured = config_values["tickrake_history_dirs"]
+    if isinstance(configured, list) and configured:
+        return tuple(configured)
+    return (
+        (home / ".tickrake" / "data" / "history" / "ibkr-paper").resolve(),
+        (home / ".tickrake" / "data" / "history" / "tickrake").resolve(),
+    )
+
+
+def _parse_config_text(text: str, config_path: Path) -> RawConfigValues:
     studies_dir: str | None = None
     data_dir: str | None = None
+    tickrake_sqlite_path: str | None = None
+    tickrake_history_dirs: list[str] | None = None
     for lineno, raw_line in enumerate(text.splitlines(), start=1):
         line = _strip_toml_comment(raw_line).strip()
         if not line:
@@ -70,7 +133,12 @@ def _parse_config_text(text: str, config_path: Path) -> dict[str, str | None]:
         if "=" not in line:
             raise ConfigError(f"Invalid config in {config_path}:{lineno}: expected key = value")
         key, value = (part.strip() for part in line.split("=", 1))
-        if key not in {"studies_dir", "data_dir"}:
+        if key not in {
+            "studies_dir",
+            "data_dir",
+            "tickrake_sqlite_path",
+            "tickrake_history_dirs",
+        }:
             raise ConfigError(f"Invalid config in {config_path}:{lineno}: unsupported key {key!r}")
         if key == "studies_dir":
             if studies_dir is not None:
@@ -79,14 +147,32 @@ def _parse_config_text(text: str, config_path: Path) -> dict[str, str | None]:
                 )
             studies_dir = _parse_toml_string(value, config_path, lineno, key)
             continue
-
-        if data_dir is not None:
-            raise ConfigError(f"Invalid config in {config_path}:{lineno}: duplicate data_dir")
-        data_dir = _parse_toml_string(value, config_path, lineno, key)
+        if key == "data_dir":
+            if data_dir is not None:
+                raise ConfigError(f"Invalid config in {config_path}:{lineno}: duplicate data_dir")
+            data_dir = _parse_toml_string(value, config_path, lineno, key)
+            continue
+        if key == "tickrake_sqlite_path":
+            if tickrake_sqlite_path is not None:
+                raise ConfigError(
+                    f"Invalid config in {config_path}:{lineno}: duplicate tickrake_sqlite_path"
+                )
+            tickrake_sqlite_path = _parse_toml_string(value, config_path, lineno, key)
+            continue
+        if tickrake_history_dirs is not None:
+            raise ConfigError(
+                f"Invalid config in {config_path}:{lineno}: duplicate tickrake_history_dirs"
+            )
+        tickrake_history_dirs = _parse_toml_string_list(value, config_path, lineno, key)
 
     if studies_dir is None:
         raise ConfigError(f"Invalid config in {config_path}: missing studies_dir")
-    return {"studies_dir": studies_dir, "data_dir": data_dir}
+    return {
+        "studies_dir": studies_dir,
+        "data_dir": data_dir,
+        "tickrake_sqlite_path": tickrake_sqlite_path,
+        "tickrake_history_dirs": tickrake_history_dirs,
+    }
 
 
 def _strip_toml_comment(line: str) -> str:
@@ -119,3 +205,20 @@ def _parse_toml_string(value: str, config_path: Path, lineno: int, key: str) -> 
     if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
         return value[1:-1]
     raise ConfigError(f"Invalid config in {config_path}:{lineno}: {key} must be a quoted string")
+
+
+def _parse_toml_string_list(value: str, config_path: Path, lineno: int, key: str) -> list[str]:
+    stripped = value.strip()
+    if not (stripped.startswith("[") and stripped.endswith("]")):
+        raise ConfigError(
+            f"Invalid config in {config_path}:{lineno}: {key} must be a list of quoted strings"
+        )
+    inner = stripped[1:-1].strip()
+    if not inner:
+        return []
+    parts = [part.strip() for part in inner.split(",")]
+    if any(not part for part in parts):
+        raise ConfigError(
+            f"Invalid config in {config_path}:{lineno}: {key} contains an empty value"
+        )
+    return [_parse_toml_string(part, config_path, lineno, key) for part in parts]

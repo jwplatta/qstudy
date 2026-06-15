@@ -3,6 +3,8 @@ Unit tests for qstudy backtesting library.
 Each test verifies against hand-calculated expected values, not against the implementation itself.
 """
 
+import sqlite3
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -33,6 +35,61 @@ from qstudy.study.portfolio import (
 
 def make_dates(n):
     return pd.bdate_range("2020-01-01", periods=n)
+
+
+def make_tickrake_sqlite(path, memberships):
+    connection = sqlite3.connect(path)
+    try:
+        connection.executescript(
+            """
+            CREATE TABLE market_indexes (
+              id INTEGER PRIMARY KEY,
+              code TEXT NOT NULL
+            );
+            CREATE TABLE tickers (
+              id INTEGER PRIMARY KEY,
+              ticker TEXT NOT NULL,
+              gics_sector TEXT
+            );
+            CREATE TABLE market_index_memberships (
+              id INTEGER PRIMARY KEY,
+              market_index_id INTEGER NOT NULL,
+              ticker_id INTEGER NOT NULL,
+              start_date TEXT NOT NULL,
+              end_date TEXT
+            );
+            """
+        )
+        connection.execute("INSERT INTO market_indexes (id, code) VALUES (1, 'SP500')")
+        tickers = sorted({ticker for ticker, _, _, _ in memberships} | {"SPY"})
+        for idx, ticker in enumerate(tickers, start=1):
+            sector = "Technology" if ticker == "AAA" else "Industrials"
+            connection.execute(
+                "INSERT INTO tickers (id, ticker, gics_sector) VALUES (?, ?, ?)",
+                (idx, ticker, sector),
+            )
+        ticker_ids = {
+            ticker: idx
+            for idx, ticker in connection.execute("SELECT id, ticker FROM tickers").fetchall()
+        }
+        for row_id, (ticker, index_code, start_date, end_date) in enumerate(memberships, start=1):
+            connection.execute(
+                """
+                INSERT INTO market_index_memberships
+                  (id, market_index_id, ticker_id, start_date, end_date)
+                VALUES (?, 1, ?, ?, ?)
+                """,
+                (row_id, ticker_ids[ticker], start_date, end_date),
+            )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def write_history_csv(path, rows):
+    lines = ["datetime,open,high,low,close,volume"]
+    lines.extend(",".join(str(value) for value in row) for row in rows)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -956,45 +1013,171 @@ class TestStudyNewMethods:
         pd.testing.assert_frame_equal(study.cache["high"], universe.high)
         pd.testing.assert_frame_equal(study.cache["low"], universe.low)
 
-    def test_download_uses_cache_when_available(self, monkeypatch, tmp_path):
-        dates = pd.date_range("2024-01-02", periods=3, freq="D")
-        columns = pd.MultiIndex.from_product(
-            [["Open", "High", "Low", "Close", "Volume"], ["AAPL", "MSFT"]]
-        )
-        data = pd.DataFrame(
+    def test_download_uses_cache_when_available(self, tmp_path):
+        sqlite_path = tmp_path / "tickrake.sqlite3"
+        history_dir = tmp_path / "history"
+        history_dir.mkdir()
+        make_tickrake_sqlite(sqlite_path, [])
+        write_history_csv(
+            history_dir / "AAPL_day.csv",
             [
-                [100.0, 200.0, 101.0, 201.0, 99.0, 199.0, 100.5, 200.5, 1_000, 2_000],
-                [101.0, 201.0, 102.0, 202.0, 100.0, 200.0, 101.5, 201.5, 1_100, 2_100],
-                [102.0, 202.0, 103.0, 203.0, 101.0, 201.0, 102.5, 202.5, 1_200, 2_200],
+                ("2024-01-02T06:00:00Z", 100, 101, 99, 100.5, 1_000),
+                ("2024-01-03T06:00:00Z", 101, 102, 100, 101.5, 1_100),
+                ("2024-01-04T06:00:00Z", 102, 103, 101, 102.5, 1_200),
             ],
-            index=dates,
-            columns=columns,
         )
-        call_count = {"value": 0}
-
-        def fake_download(*args, **kwargs):
-            call_count["value"] += 1
-            return data
-
-        monkeypatch.setattr("qstudy.data.loader.yf.download", fake_download)
+        write_history_csv(
+            history_dir / "MSFT_day.csv",
+            [
+                ("2024-01-02T06:00:00Z", 200, 201, 199, 200.5, 2_000),
+                ("2024-01-03T06:00:00Z", 201, 202, 200, 201.5, 2_100),
+                ("2024-01-04T06:00:00Z", 202, 203, 201, 202.5, 2_200),
+            ],
+        )
 
         first = qs.download(
             ["AAPL", "MSFT"],
             "2024-01-02",
             "2024-01-05",
             data_dir=tmp_path,
+            sqlite_path=sqlite_path,
+            history_dirs=[history_dir],
         )
         second = qs.download(
             ["AAPL", "MSFT"],
             "2024-01-02",
             "2024-01-05",
             data_dir=tmp_path,
+            sqlite_path=sqlite_path,
+            history_dirs=[history_dir],
         )
 
-        assert call_count["value"] == 1
         pd.testing.assert_frame_equal(first.close, second.close)
-        assert list((tmp_path / "yfinance").glob("*.pkl"))
-        assert list((tmp_path / "yfinance").glob("*.json"))
+        assert list((tmp_path / "tickrake").glob("*.pkl"))
+        assert list((tmp_path / "tickrake").glob("*.json"))
+
+    def test_download_prefers_earlier_history_dir(self, tmp_path):
+        sqlite_path = tmp_path / "tickrake.sqlite3"
+        primary_dir = tmp_path / "ibkr-paper"
+        fallback_dir = tmp_path / "tickrake"
+        primary_dir.mkdir()
+        fallback_dir.mkdir()
+        make_tickrake_sqlite(sqlite_path, [])
+        write_history_csv(
+            fallback_dir / "AAPL_day.csv",
+            [("2024-01-02T06:00:00Z", 1, 2, 0.5, 1.5, 10)],
+        )
+        write_history_csv(
+            primary_dir / "AAPL_day.csv",
+            [("2024-01-02T06:00:00Z", 10, 11, 9, 10.5, 99)],
+        )
+
+        data = qs.download(
+            ["AAPL"],
+            "2024-01-02",
+            "2024-01-02",
+            sqlite_path=sqlite_path,
+            history_dirs=[primary_dir, fallback_dir],
+        )
+
+        assert data.close.loc[pd.Timestamp("2024-01-02"), "AAPL"] == pytest.approx(10.5)
+
+    def test_index_helpers_and_download_apply_membership_mask(self, tmp_path):
+        sqlite_path = tmp_path / "tickrake.sqlite3"
+        history_dir = tmp_path / "history"
+        history_dir.mkdir()
+        make_tickrake_sqlite(
+            sqlite_path,
+            [
+                ("AAA", "SP500", "2024-01-02", "2024-01-03"),
+                ("BBB", "SP500", "2024-01-03", None),
+            ],
+        )
+        write_history_csv(
+            history_dir / "AAA_day.csv",
+            [
+                ("2024-01-02T06:00:00Z", 10, 11, 9, 10, 100),
+                ("2024-01-03T06:00:00Z", 11, 12, 10, 11, 110),
+                ("2024-01-04T06:00:00Z", 12, 13, 11, 12, 120),
+            ],
+        )
+        write_history_csv(
+            history_dir / "BBB_day.csv",
+            [
+                ("2024-01-02T06:00:00Z", 20, 21, 19, 20, 200),
+                ("2024-01-03T06:00:00Z", 21, 22, 20, 21, 210),
+                ("2024-01-04T06:00:00Z", 22, 23, 21, 22, 220),
+            ],
+        )
+
+        tickers = qs.index_range_tickers("SP500", "2024-01-02", "2024-01-04", sqlite_path)
+        assert tickers == ["AAA", "BBB"]
+
+        mask = qs.index_membership_mask(
+            ["AAA", "BBB"],
+            "SP500",
+            "2024-01-02",
+            "2024-01-04",
+            sqlite_path,
+            date_index=pd.DatetimeIndex(
+                [pd.Timestamp("2024-01-02"), pd.Timestamp("2024-01-03"), pd.Timestamp("2024-01-04")]
+            ),
+        )
+        assert mask.loc[pd.Timestamp("2024-01-02"), "AAA"]
+        assert not mask.loc[pd.Timestamp("2024-01-02"), "BBB"]
+        assert not mask.loc[pd.Timestamp("2024-01-04"), "AAA"]
+        assert mask.loc[pd.Timestamp("2024-01-04"), "BBB"]
+
+        data = qs.download(
+            start="2024-01-02",
+            end="2024-01-04",
+            index_code="SP500",
+            sqlite_path=sqlite_path,
+            history_dirs=[history_dir],
+        )
+
+        assert data.tickers == ["AAA", "BBB"]
+        assert data.index_code == "SP500"
+        assert pd.isna(data.close.loc[pd.Timestamp("2024-01-02"), "BBB"])
+        assert pd.isna(data.close.loc[pd.Timestamp("2024-01-04"), "AAA"])
+        assert pd.isna(data.returns.loc[pd.Timestamp("2024-01-02"), "BBB"])
+        assert pd.isna(data.returns.loc[pd.Timestamp("2024-01-04"), "AAA"])
+        assert data.membership_mask is not None
+
+        study = qs.Study(universe=data)
+        assert pd.isna(study.cache["close"].loc[pd.Timestamp("2024-01-02"), "BBB"])
+        assert pd.isna(study.cache["returns"].loc[pd.Timestamp("2024-01-04"), "AAA"])
+
+    def test_download_warns_and_drops_missing_tickers(self, tmp_path):
+        sqlite_path = tmp_path / "tickrake.sqlite3"
+        history_dir = tmp_path / "history"
+        history_dir.mkdir()
+        make_tickrake_sqlite(sqlite_path, [])
+        write_history_csv(
+            history_dir / "AAPL_day.csv",
+            [("2024-01-02T06:00:00Z", 100, 101, 99, 100.5, 1_000)],
+        )
+
+        with pytest.warns(UserWarning, match="Dropping 1 ticker"):
+            data = qs.download(
+                ["AAPL", "MSFT"],
+                "2024-01-02",
+                "2024-01-02",
+                sqlite_path=sqlite_path,
+                history_dirs=[history_dir],
+            )
+
+        assert data.tickers == ["AAPL"]
+
+    def test_get_sector_map_reads_tickrake_sqlite(self, tmp_path):
+        sqlite_path = tmp_path / "tickrake.sqlite3"
+        make_tickrake_sqlite(sqlite_path, [("AAA", "SP500", "2024-01-02", None)])
+
+        sector_map = qs.get_sector_map(
+            ["AAA", "MISSING"], cache_path=tmp_path / "sector.json", sqlite_path=sqlite_path
+        )
+
+        assert sector_map == {"AAA": "Technology", "MISSING": "Unknown"}
 
 
 # ---------------------------------------------------------------------------

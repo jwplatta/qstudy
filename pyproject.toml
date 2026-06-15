@@ -30,7 +30,6 @@ dependencies = [
     "scikit-learn",
     "lean",
     "simfin>=1.0.1",
-    "yfinance",
     "seaborn",
     "statsmodels",
     "fredapi",

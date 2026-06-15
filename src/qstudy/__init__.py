@@ -6,7 +6,13 @@ from qstudy.charts import (
     rolling_sharpe_plot,
     summary_plot,
 )
-from qstudy.data.loader import StudyData, download, get_sector_map
+from qstudy.data.loader import (
+    StudyData,
+    download,
+    get_sector_map,
+    index_membership_mask,
+    index_range_tickers,
+)
 from qstudy.signals.factors import BarraLiteFactorModel, cross_sectional_residualize, residualize
 from qstudy.signals.filters import (
     momentum_context_filter,
@@ -52,6 +58,8 @@ __all__ = [
     "download",
     "StudyData",
     "get_sector_map",
+    "index_range_tickers",
+    "index_membership_mask",
     # signal filters
     "vol_filter",
     "volume_zscore_filter",
