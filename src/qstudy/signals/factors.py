@@ -9,6 +9,7 @@ from sklearn.linear_model import LinearRegression
 def residualize(
     returns: pd.DataFrame,
     factor_returns: pd.DataFrame,
+    fit_start: str | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Cross-sectionally residualize each ticker's returns against a factor set via OLS.
 
@@ -20,6 +21,11 @@ def residualize(
         returns:        Daily returns (dates x tickers).
         factor_returns: Factor returns (dates x factors), e.g. from load_factors(['SPY', 'XLK']).
                         Index must be compatible with returns.index.
+        fit_start:      Optional ISO date string (e.g. ``"2015-01-01"``). When provided, OLS
+                        betas are estimated only on rows >= fit_start, but residuals are
+                        produced for the full date range using those betas. Use this when
+                        data includes a warm-up period before the backtest start so that beta
+                        estimates remain independent of how far back the warm-up extends.
 
     Returns:
         residuals_df: DataFrame of OLS residuals, same shape as the aligned returns.
@@ -30,21 +36,42 @@ def residualize(
     r = returns.loc[common_index]
     f = sm.add_constant(factor_returns.loc[common_index])
 
+    # Separate fit window from prediction window
+    if fit_start is not None:
+        fit_idx = common_index[common_index >= fit_start]
+        r_fit = r.loc[fit_idx]
+        f_fit = f.loc[fit_idx]
+    else:
+        r_fit = r
+        f_fit = f
+
     residuals = pd.DataFrame(index=common_index, columns=r.columns, dtype=float)
     params: dict[str, pd.Series] = {}
     rsquared: dict[str, float] = {}
 
     for ticker in r.columns:
-        y = r[ticker].dropna()
-        regression_frame = pd.concat([y.rename("returns"), f.loc[y.index]], axis=1).dropna()
+        y_fit = r_fit[ticker].dropna()
+        regression_frame = pd.concat(
+            [y_fit.rename("returns"), f_fit.loc[y_fit.index]], axis=1
+        ).dropna()
         if regression_frame.empty:
             continue
-        y = regression_frame["returns"]
-        x = regression_frame.drop(columns="returns")
-        model = sm.OLS(y, x).fit()
-        residuals.loc[y.index, ticker] = model.resid
+        y_fit = regression_frame["returns"]
+        x_fit = regression_frame.drop(columns="returns")
+        model = sm.OLS(y_fit, x_fit).fit()
         params[ticker] = model.params
         rsquared[ticker] = model.rsquared
+
+        if fit_start is None:
+            # OLS was fit on the full range — residuals are already available
+            residuals.loc[y_fit.index, ticker] = model.resid
+        else:
+            # Apply fitted betas to full date range (f already includes const column)
+            y_full = r[ticker].dropna()
+            x_full = f.loc[y_full.index].dropna()
+            aligned_idx = y_full.index.intersection(x_full.index)
+            pred = x_full.loc[aligned_idx].dot(model.params)
+            residuals.loc[aligned_idx, ticker] = y_full.loc[aligned_idx] - pred
 
     params_df = pd.DataFrame(params).T
     params_df.index.name = "ticker"

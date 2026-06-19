@@ -124,6 +124,7 @@ class Study:
         # Pipeline state
         self._steps: list[tuple[str, str, Callable]] = []
         self._residualize: bool = False
+        self._residualize_fit_start: str | None = None
         self._factor_model: BarraLiteFactorModel | None = None
         self._tradeable_constraint_fns: list[Callable] = []
 
@@ -240,7 +241,7 @@ class Study:
     # Pre-signal: residualization
     # ------------------------------------------------------------------
 
-    def residualize_returns(self) -> Study:
+    def residualize_returns(self, fit_start: str | None = None) -> Study:
         """Residualize returns against factors or benchmark before computing the signal.
 
         Requires ``factors`` or ``benchmark`` to be set in the constructor.
@@ -248,8 +249,16 @@ class Study:
 
         The residualized returns are stored in ``cache["residual_returns"]`` and used
         as ``_active_returns`` by the built-in signal generators.
+
+        Args:
+            fit_start: Optional ISO date string (e.g. ``"2015-01-01"``). When provided,
+                       OLS betas are estimated only on rows >= fit_start but residuals are
+                       produced for all loaded dates using those betas. Use this when data
+                       includes a warm-up period so that beta estimates are independent of
+                       how far back the warm-up extends.
         """
         self._residualize = True
+        self._residualize_fit_start = fit_start
         return self
 
     def with_transaction_costs(self, cost_bps: float) -> Study:
@@ -1354,7 +1363,9 @@ class Study:
             raise ValueError(
                 "residualize_returns() requires factors= or benchmark= in the Study constructor."
             )
-        residuals, _, _ = residualize(returns, factor_returns)
+        residuals, _, _ = residualize(
+            returns, factor_returns, fit_start=self._residualize_fit_start
+        )
         self._cache["residual_returns"] = residuals
 
     @staticmethod

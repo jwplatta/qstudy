@@ -36,6 +36,11 @@ import qstudy.study.metrics as qs_metrics
 # ---------------------------------------------------------------------------
 
 COST_BPS = 10.0
+# Warm-up period loaded before each fold start so rolling windows are filled
+# from day 1 of the fold. OLS residualization and the equity-curve regime
+# scaler are anchored to fold_start so warm-up data doesn't change in-sample
+# beta estimates or regime decisions.
+WARMUP_YEARS = 1
 FOLDS = [
     ("2015-01-01", "2019-12-31"),
     ("2015-01-01", "2020-12-31"),
@@ -151,10 +156,11 @@ def main() -> None:
         print("=" * 60)
 
         print("  Loading data ...")
-        universe, benchmark, factors = pu.load_data(fold_start, fold_end)
+        warmup_start = str(int(fold_start[:4]) - WARMUP_YEARS) + fold_start[4:]
+        universe, benchmark, factors = pu.load_data(warmup_start, fold_end)
         print(f"  Universe: {universe.returns.shape[0]} days x {universe.returns.shape[1]} tickers")
 
-        partners = pu.compute_distance_partners(universe, train_end=fold_end)
+        partners = pu.compute_distance_partners(universe, train_end=fold_end, train_start=fold_start)
         get_distance_partners = lambda: partners  # noqa: E731
         sector_etf_map = pu.get_sector_etf_map_for(universe)
         get_sector_etf_map = lambda: sector_etf_map  # noqa: E731
@@ -176,7 +182,15 @@ def main() -> None:
             specs = all_specs
 
         print(f"  Running {len(specs)} sleeves ...")
-        studies = pu.run_sleeve_pool(specs, universe, benchmark, factors, sector_map)
+        studies = pu.run_sleeve_pool(
+            specs,
+            universe,
+            benchmark,
+            factors,
+            sector_map,
+            residualize_fit_start=fold_start,
+            scaler_start=fold_start,
+        )
         print("  Done.")
 
         spy_returns = benchmark.returns["SPY"]
@@ -343,9 +357,7 @@ def main() -> None:
     # y-axis: numbered label + abbreviated name
     ax.set_yticks(range(n_sleeves))
     plt.setp(
-        ax.set_yticklabels(
-            [f"{i + 1}. {s}" for i, s in enumerate(short_names)], fontsize=9
-        ),
+        ax.set_yticklabels([f"{i + 1}. {s}" for i, s in enumerate(short_names)], fontsize=9),
         rotation=30,
         ha="right",
     )

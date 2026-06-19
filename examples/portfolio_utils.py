@@ -60,6 +60,7 @@ def load_data(start: str, end: str):
 def compute_distance_partners(
     universe,
     train_end: str,
+    train_start: str | None = None,
     zw_list: list[int] | None = None,
 ) -> dict[int, dict[str, list[str]]]:
     """Compute top-3 nearest distance partners by normalised price correlation.
@@ -70,12 +71,16 @@ def compute_distance_partners(
         StudyData object — ``universe.log_returns`` is used.
     train_end:
         Inclusive end date for the training slice (e.g. ``"2020-12-31"``).
+    train_start:
+        Optional inclusive start date. When set, only log returns from this
+        date onwards are used for correlation — excludes warm-up rows so that
+        pair assignments are identical regardless of how far back data is loaded.
     zw_list:
         Z-windows to compute partners for. Defaults to ``[10, 20, 60]``.
     """
     if zw_list is None:
         zw_list = [10, 20, 60]
-    log_price = universe.log_returns.loc[:train_end].cumsum()
+    log_price = universe.log_returns.loc[train_start:train_end].cumsum()
     norm = (log_price - log_price.mean()) / log_price.std().clip(lower=1e-8)
     dist = 1 - norm.corr()
     partners: dict[int, dict[str, list[str]]] = {}
@@ -103,23 +108,44 @@ def get_sector_etf_map_for(universe) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 
-def equity_curve_regime_scale(positions: pd.DataFrame, **cache) -> pd.DataFrame:
-    """Scale to 25% exposure when sleeve equity curve is below its 20-day MA."""
-    returns = cache["returns"]
-    _tm = cache.get("_tradeable_mask")
-    _lm = cache.get("_liquidity_mask")
-    mask = _tm if _tm is not None else _lm
-    r = returns.where(mask) if mask is not None else returns
-    raw = (positions.shift(1) * r).sum(axis=1)
-    equity = (1 + raw).cumprod()
-    scale = pd.Series(
-        np.where(equity > equity.rolling(20).mean(), 1.0, 0.1),
-        index=equity.index,
-    )
-    return positions.mul(scale.shift(1), axis=0)
+def make_equity_curve_regime_scale(scale_start: str | None = None):
+    """Return an equity-curve regime scaler.
+
+    Args:
+        scale_start: If provided, the equity curve (and its 20-day MA) is computed
+            only from this date onwards. Rows before this date receive scale=1.0.
+            Use this when data includes a warm-up period so the regime signal is
+            independent of how far back the load window extends.
+    """
+
+    def equity_curve_regime_scale(positions: pd.DataFrame, **cache) -> pd.DataFrame:
+        returns = cache["returns"]
+        _tm = cache.get("_tradeable_mask")
+        _lm = cache.get("_liquidity_mask")
+        mask = _tm if _tm is not None else _lm
+        r = returns.where(mask) if mask is not None else returns
+        raw = (positions.shift(1) * r).sum(axis=1)
+
+        if scale_start is not None:
+            raw_fit = raw.loc[scale_start:]
+        else:
+            raw_fit = raw
+
+        equity = (1 + raw_fit).cumprod()
+        regime = pd.Series(
+            np.where(equity > equity.rolling(20).mean(), 1.0, 0.1),
+            index=raw_fit.index,
+        )
+        # Rows before scale_start get scale=1.0
+        scale = regime.reindex(raw.index, fill_value=1.0)
+        return positions.mul(scale.shift(1), axis=0)
+
+    equity_curve_regime_scale.__name__ = "equity_curve_regime_scale"
+    return equity_curve_regime_scale
 
 
-equity_curve_regime_scale.__name__ = "equity_curve_regime_scale"
+# Default instance (no warm-up): preserves existing behavior
+equity_curve_regime_scale = make_equity_curve_regime_scale()
 
 
 # ---------------------------------------------------------------------------
@@ -133,8 +159,19 @@ def run_sleeve_for_spec(
     benchmark,
     factors,
     sector_map: dict[str, str],
+    residualize_fit_start: str | None = None,
+    scaler_start: str | None = None,
 ) -> Study:
-    """Build and run a single sleeve defined by *spec*."""
+    """Build and run a single sleeve defined by *spec*.
+
+    Args:
+        residualize_fit_start: If provided, OLS betas for residualization are estimated
+            only from this date onwards (warm-up rows are excluded from fitting).
+            Residuals are still produced for all loaded dates using those betas.
+        scaler_start: If provided, the equity curve regime scaler computes its cumprod
+            only from this date onwards. Rows before this date receive scale=1.0.
+            Use this alongside residualize_fit_start when loading a warm-up period.
+    """
     builder = Study(
         universe=universe,
         benchmark=benchmark,
@@ -147,7 +184,7 @@ def run_sleeve_for_spec(
             sector_map=sector_map,
         )
     if spec.use_factor_model or spec.use_etf_resid or spec.needs_resid_cache:
-        builder = builder.residualize_returns()
+        builder = builder.residualize_returns(fit_start=residualize_fit_start)
 
     builder = builder.base_signal(spec.signal_fn)
 
@@ -159,7 +196,7 @@ def run_sleeve_for_spec(
         .rank_transform()
         .build_long_short(n_long=N_LONG, n_short=N_SHORT)
         .fully_invest()
-        .scale_risk(fn=equity_curve_regime_scale)
+        .scale_risk(fn=make_equity_curve_regime_scale(scaler_start))
     )
 
     for scaler_fn in spec.risk_scalers:
@@ -175,13 +212,30 @@ def run_sleeve_pool(
     factors,
     sector_map: dict[str, str],
     verbose: bool = True,
+    residualize_fit_start: str | None = None,
+    scaler_start: str | None = None,
 ) -> dict[str, Study]:
-    """Run all specs and return a dict of name -> Study."""
+    """Run all specs and return a dict of name -> Study.
+
+    Args:
+        residualize_fit_start: Passed to :func:`run_sleeve_for_spec`. When set, OLS betas
+            for residualization are estimated only from this date onwards.
+        scaler_start: Passed to :func:`run_sleeve_for_spec`. When set, the equity curve
+            regime scaler computes its cumprod only from this date onwards.
+    """
     studies: dict[str, Study] = {}
     for name, spec in specs.items():
         if verbose:
             print(f"  Running {name} ...", end=" ", flush=True)
-        studies[name] = run_sleeve_for_spec(spec, universe, benchmark, factors, sector_map)
+        studies[name] = run_sleeve_for_spec(
+            spec,
+            universe,
+            benchmark,
+            factors,
+            sector_map,
+            residualize_fit_start=residualize_fit_start,
+            scaler_start=scaler_start,
+        )
         if verbose:
             m = studies[name].metrics_dict()
             print(f"sharpe={m.get('sharpe', float('nan')):.3f}")

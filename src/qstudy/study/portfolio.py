@@ -86,9 +86,9 @@ def liquidity_filter(
     Returns:
         Boolean DataFrame (dates x tickers), True = eligible for trading.
     """
-    dollar_vol = (close * volume).dropna(axis=1)
+    dollar_vol = close * volume
     avg_dollar_vol = dollar_vol.rolling(window).mean()
-    rank = avg_dollar_vol.rank(axis=1, ascending=False)
+    rank = avg_dollar_vol.rank(axis=1, ascending=False, na_option="keep")
     return rank <= top_n
 
 
