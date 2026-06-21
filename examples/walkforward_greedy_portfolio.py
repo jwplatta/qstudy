@@ -22,7 +22,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).parent))
 
 import portfolio_utils as pu
-from sig_fam_utils import build_top5_by_sig_fam_sleeve_specs
+from sig_fam_utils import build_sleeve_specs
 
 import qstudy as qs
 
@@ -31,6 +31,8 @@ import qstudy as qs
 # ---------------------------------------------------------------------------
 
 FOLDS = [
+    ("2015-01-01", "2017-12-31", "2018-01-01", "2018-12-31"),
+    ("2015-01-01", "2018-12-31", "2019-01-01", "2019-12-31"),
     ("2015-01-01", "2019-12-31", "2020-01-01", "2020-12-31"),
     ("2015-01-01", "2020-12-31", "2021-01-01", "2021-12-31"),
     ("2015-01-01", "2021-12-31", "2022-01-01", "2022-12-31"),
@@ -38,6 +40,7 @@ FOLDS = [
 ]
 
 COST_BPS = 10.0
+WARMUP_YEARS = 1
 WEIGHTING_SCHEMES = ["equal", "equal_vol", "equal_sharpe"]
 # Optional: fix the first sleeve picked by the greedy algorithm.
 # When set, this sleeve is always selected first and the greedy search
@@ -46,10 +49,14 @@ WEIGHTING_SCHEMES = ["equal", "equal_vol", "equal_sharpe"]
 # "etf_factor_resid_mr_5d__r10__trend_20_100__cond__residual_dispersion_high_20_q75",
 # "mr_5d__r10__trend_20_100__cond__residual_dispersion_high_20_q75",
 
-SEED_SLEEVE: str | None = (
-    "sector_rel_mr_5d__r10__trend_20_100__cond__residual_dispersion_high_20_q75"
-)
-# SEED_SLEEVE = "dist_mr_k3_z20__r21__cond__vol_contraction_10_60"
+# Top seed candidates from find_seed_sleeves.py (run to refresh):
+#   #1  avg_SR=1.15  neg_yrs=11%  "bear_reversal_20d__cond__bear_narrow_lt40__r21__trend_20_100_mr"
+#   #2  avg_SR=1.20  neg_yrs=11%  "vol_accel_20_120d__cond__breadth_lt40__r10__vol_10_60_up"
+#   #3  avg_SR=0.95  neg_yrs= 0%  "vol_accel_10_90d__cond__bear_narrow_lt40__r10__trend_50_200_mr"
+#   #4  avg_SR=0.95  neg_yrs=11%  "low_vol_mom_120d__cond__breadth_lt50__r21__vol_20_60"  (non-bear-breadth)
+#   #5  avg_SR=1.05  neg_yrs=14%  "gap_accum_3d__r21__trend_20_100_off"  (event; good 2022 hedge)
+# Note: ranks 1-5 are bear-narrow-breadth — use a non-bear-breadth seed for family diversification.
+SEED_SLEEVE: str | None = None
 MAX_PAIRWISE_ABS_CORR = 0.35
 MIN_NET_SHARPE_DELTA = 0.01
 MAX_DD_REGRESSION = 0.001
@@ -81,13 +88,16 @@ def main() -> None:
         print("=" * 60)
 
         # --- Load combined window data ---
-        print(f"  Loading data ({train_start} to {val_end}) ...")
-        universe, benchmark, factors = pu.load_data(train_start, val_end)
+        warmup_start = str(int(train_start[:4]) - WARMUP_YEARS) + train_start[4:]
+        print(f"  Loading data ({warmup_start} to {val_end}) ...")
+        universe, benchmark, factors = pu.load_data(warmup_start, val_end)
         print(f"  Universe: {universe.returns.shape[0]} days x {universe.returns.shape[1]} tickers")
 
         # --- Distance partners on training slice only ---
         print("  Computing distance partners on train slice ...")
-        partners = pu.compute_distance_partners(universe, train_end=train_end)
+        partners = pu.compute_distance_partners(
+            universe, train_end=train_end, train_start=train_start
+        )
         get_distance_partners = lambda: partners  # noqa: E731
 
         sector_etf_map = pu.get_sector_etf_map_for(universe)
@@ -95,12 +105,21 @@ def main() -> None:
         sector_map = qs.get_sector_map(list(universe.returns.columns))
 
         # --- Build specs and run all 30 sleeves on the full combined window ---
-        specs = build_top5_by_sig_fam_sleeve_specs(
+        specs = build_sleeve_specs(
             get_distance_partners=get_distance_partners,
             get_sector_etf_map=get_sector_etf_map,
         )
         print(f"  Running {len(specs)} sleeves on full window ...")
-        studies = pu.run_sleeve_pool(specs, universe, benchmark, factors, sector_map, verbose=False)
+        studies = pu.run_sleeve_pool(
+            specs,
+            universe,
+            benchmark,
+            factors,
+            sector_map,
+            verbose=False,
+            residualize_fit_start=train_start,
+            scaler_start=train_start,
+        )
         print("  Done running sleeves.")
 
         # --- Build sleeve returns; slice to training period for selection ---
