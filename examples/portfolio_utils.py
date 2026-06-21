@@ -9,7 +9,7 @@ import warnings
 
 import numpy as np
 import pandas as pd
-from sig_fam_utils import SleeveSpec, build_top5_by_sig_fam_sleeve_specs  # noqa: F401
+from sig_fam_utils import SleeveSpec, build_sleeve_specs  # noqa: F401
 
 import qstudy as qs
 import qstudy.study.engine as qs_engine
